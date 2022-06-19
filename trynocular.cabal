@@ -33,5 +33,7 @@ executable trynocular
     -- other-extensions:
     build-depends:    base
                     , random
+                    , universe-base
     hs-source-dirs:   app
     default-language: GHC2021
+    ghc-options:      -Wall
