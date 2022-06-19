@@ -32,5 +32,6 @@ executable trynocular
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
     build-depends:    base
+                    , random
     hs-source-dirs:   app
-    default-language: Haskell2010
+    default-language: GHC2021
