@@ -1,3 +1,2 @@
 # trynocular
-
-Lazy generators with observation
+library for lazy generators with observable demand
