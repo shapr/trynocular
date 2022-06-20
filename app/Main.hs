@@ -1,81 +1,75 @@
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Main where
 
 import Control.Applicative (Alternative (..))
-import Data.Bifunctor (second)
+import Data.Bifunctor (first)
 import Data.Char (chr)
 import Data.Int (Int16, Int32, Int64, Int8)
-import Data.Kind (Type)
 import Data.Universe.Helpers ((+*+), (+++))
-import Data.Void (Void, absurd)
 import Data.Word (Word16, Word32, Word64, Word8)
 import System.Random
 
 main :: IO ()
 main = putStrLn "Hello, Haskell!"
 
-data Generator :: Type -> Type where
-  Empty :: Generator Void
-  Trivial :: Generator ()
-  Choice :: Generator a -> Generator b -> Generator (Either a b)
-  Both :: Generator a -> Generator b -> Generator (a, b)
-  Apply :: (a -> b) -> Generator a -> Generator b
+data Generator a
+  = Empty
+  | Trivial a
+  | Choice (Generator a) (Generator a)
+  | forall b c. Both (b -> c -> a) (Generator b) (Generator c)
 
--- | fmap id should be id, fmap id here will be Apply id ? which is a different
--- term than the input.  If constructors are not exported, the Functor law holds
--- up to observable behavior.
-instance Functor Generator where fmap = Apply
+instance Functor Generator where
+  fmap _ Empty = Empty
+  fmap f (Trivial a) = Trivial (f a)
+  fmap f (Choice g1 g2) = Choice (fmap f g1) (fmap f g2)
+  fmap f (Both f' g1 g2) = Both (\x y -> f (f' x y)) g1 g2
 
 instance Applicative Generator where
-  pure x = Apply (const x) Trivial
-  a <*> b = Apply (uncurry ($)) (Both a b)
+  pure = Trivial
+  a <*> b = Both ($) a b
 
 instance Alternative Generator where
-  empty = Apply absurd Empty
-  a <|> b = Apply (either id id) (Choice a b)
+  empty = Empty
+  (<|>) = Choice
 
 data GenKey = TrivialKey | ChoiceKey Bool GenKey | BothKey GenKey GenKey
   deriving (Eq, Ord, Show)
 
 runGenerator :: Generator a -> IO (Maybe (GenKey, a))
 runGenerator Empty = return Nothing
-runGenerator Trivial = pure (Just (TrivialKey, ()))
+runGenerator (Trivial x) = pure (Just (TrivialKey, x))
 runGenerator (Choice ga gb) = do
-  let left = fmap (\(k, x) -> (ChoiceKey True k, Left x)) <$> runGenerator ga
-      right = fmap (\(k, x) -> (ChoiceKey False k, Right x)) <$> runGenerator gb
+  let left = fmap (\(k, x) -> (ChoiceKey True k, x)) <$> runGenerator ga
+      right = fmap (\(k, x) -> (ChoiceKey False k, x)) <$> runGenerator gb
   randomIO >>= \case
     True -> left >>= maybe right (pure . Just)
     False -> right >>= maybe left (pure . Just)
-runGenerator (Both ga gb) = do
+runGenerator (Both f ga gb) = do
   left <- runGenerator ga
   right <- runGenerator gb
   case (left, right) of
-    (Just (k1, x1), Just (k2, x2)) -> pure (Just (BothKey k1 k2, (x1, x2)))
+    (Just (k1, x1), Just (k2, x2)) -> pure (Just (BothKey k1 k2, f x1 x2))
     _ -> pure Nothing
-runGenerator (Apply f ga) = fmap (second f) <$> runGenerator ga
 
 enumGenerator :: Generator a -> [(GenKey, a)]
 enumGenerator Empty = []
-enumGenerator Trivial = [(TrivialKey, ())]
+enumGenerator (Trivial x) = [(TrivialKey, x)]
 enumGenerator (Choice ga gb) =
-  [(ChoiceKey True k, Left x) | (k, x) <- enumGenerator ga]
-    +++ [(ChoiceKey False k, Right x) | (k, x) <- enumGenerator gb]
-enumGenerator (Both ga gb) =
-  [ (BothKey k1 k2, (x, y))
+  (first (ChoiceKey True) <$> enumGenerator ga)
+    +++ (first (ChoiceKey False) <$> enumGenerator gb)
+enumGenerator (Both f ga gb) =
+  [ (BothKey k1 k2, f x y)
     | ((k1, x), (k2, y)) <- enumGenerator ga +*+ enumGenerator gb
   ]
-enumGenerator (Apply f g) = map (second f) (enumGenerator g)
 
 rerunGenerator :: Generator a -> GenKey -> a
-rerunGenerator Trivial TrivialKey = ()
+rerunGenerator (Trivial x) TrivialKey = x
 rerunGenerator (Choice ga gb) (ChoiceKey b k)
-  | b = Left (rerunGenerator ga k)
-  | otherwise = Right (rerunGenerator gb k)
-rerunGenerator (Both ga gb) (BothKey k1 k2) =
-  (rerunGenerator ga k1, rerunGenerator gb k2)
-rerunGenerator (Apply f ga) k = f (rerunGenerator ga k)
+  | b = rerunGenerator ga k
+  | otherwise = rerunGenerator gb k
+rerunGenerator (Both f ga gb) (BothKey k1 k2) =
+  f (rerunGenerator ga k1) (rerunGenerator gb k2)
 rerunGenerator _ _ = error "key doesn't match generator"
 
 genBits :: Integral t => Int -> Generator t
