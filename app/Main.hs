@@ -143,3 +143,38 @@ posIntegerGen :: Generator Integer
 posIntegerGen =
   either (const 1) (either (* 2) ((+ 1) . (* 2)))
     <$> Choice Trivial (Choice posIntegerGen posIntegerGen)
+
+class Generable a where gen :: Generator a
+
+instance Generable () where gen = unitGen
+
+instance Generable Bool where gen = boolGen
+
+instance Generable Word8 where gen = word8Gen
+
+instance Generable Word16 where gen = word16Gen
+
+instance Generable Word32 where gen = word32Gen
+
+instance Generable Word64 where gen = word64Gen
+
+instance Generable Int8 where gen = int8Gen
+
+instance Generable Int16 where gen = int16Gen
+
+instance Generable Int32 where gen = int32Gen
+
+instance Generable Int64 where gen = int64Gen
+
+instance Generable Integer where gen = integerGen
+
+instance Generable a => Generable (Maybe a) where gen = maybeGen gen
+
+instance (Generable a, Generable b) => Generable (Either a b) where
+  gen = eitherGen gen gen
+
+instance (Generable a, Generable b) => Generable (a, b) where
+  gen = pairGen gen gen
+
+instance Generable a => Generable [a] where
+  gen = listGen gen
