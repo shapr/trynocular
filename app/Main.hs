@@ -2,11 +2,12 @@
 
 module Main where
 
+import Data.Bifunctor (second)
 import Data.Bool (bool)
 import Data.Either
-import Data.Int (Int8)
+import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Universe.Helpers ((+*+), (+++))
-import Data.Word (Word16, Word8)
+import Data.Word (Word16, Word32, Word64, Word8)
 import System.Random
 
 main :: IO ()
@@ -14,9 +15,22 @@ main = putStrLn "Hello, Haskell!"
 
 data Generator a where
   Trivial :: Generator ()
-  Choice :: Generator a -> Generator b -> Generator (Either a b) -- if a and b are the same, you get Either a a which is easy to collapse into a
+  Choice :: Generator a -> Generator b -> Generator (Either a b)
   Both :: Generator a -> Generator b -> Generator (a, b)
   Apply :: (a -> b) -> Generator a -> Generator b
+
+-- | fmap id should be id, fmap id here will be Apply id ? which is a different
+-- term than the input.  If constructors are not exported, the Functor law holds
+-- up to observable behavior.
+instance Functor Generator where
+  fmap :: (a -> b) -> Generator a -> Generator b
+  fmap = Apply
+
+instance Applicative Generator where
+  pure :: a -> Generator a
+  pure a = Apply (const a) Trivial
+  (<*>) :: Generator (d -> e) -> Generator d -> Generator e
+  a <*> b = Apply (uncurry ($)) (Both a b)
 
 data GenKey = TrivialKey | ChoiceKey Bool GenKey | BothKey GenKey GenKey
   deriving (Eq, Ord, Show)
@@ -39,26 +53,6 @@ deserializeKey (Both a b) xs =
 deserializeKey (Apply _ a) xs = deserializeKey a xs
 deserializeKey (Choice _ _) [] = error "serialized key too short"
 
-reproduceGen :: Generator a -> GenKey -> a
-reproduceGen Trivial TrivialKey = ()
-reproduceGen (Choice ga gb) (ChoiceKey b k) = if b then Left (reproduceGen ga k) else Right (reproduceGen gb k)
-reproduceGen (Both ga gb) (BothKey k1 k2) = (reproduceGen ga k1, reproduceGen gb k2)
-reproduceGen (Apply f ga) k = f (reproduceGen ga k)
-reproduceGen _ _ = error "key doesn't match generator"
-
--- | fmap id should be id, fmap id here will be Apply id ? which is a different term than the input
--- will give you a function that always produces a more complex value because it wraps it in Apply
--- if constructors are not exported, the Functor law holds up to observable behavior
-instance Functor Generator where
-  fmap :: (a -> b) -> Generator a -> Generator b
-  fmap = Apply
-
-instance Applicative Generator where
-  pure :: a -> Generator a
-  pure a = Apply (const a) Trivial
-  (<*>) :: Generator (d -> e) -> Generator d -> Generator e
-  a <*> b = Apply (uncurry ($)) (Both a b)
-
 runGenerator :: Generator a -> IO (GenKey, a)
 runGenerator Trivial = pure (TrivialKey, ())
 runGenerator (Choice ga gb) = do
@@ -71,14 +65,30 @@ runGenerator (Both ga gb) =
     <$> runGenerator ga <*> runGenerator gb
 runGenerator (Apply f ga) = (\(k, x) -> (k, f x)) <$> runGenerator ga
 
-enumGenerator :: Generator a -> [a]
-enumGenerator Trivial = [()]
+enumGenerator :: Generator a -> [(GenKey, a)]
+enumGenerator Trivial = [(TrivialKey, ())]
 enumGenerator (Choice ga gb) =
-  (Left <$> enumGenerator ga) +++ (Right <$> enumGenerator gb)
-enumGenerator (Both ga gb) = (enumGenerator ga) +*+ (enumGenerator gb)
-enumGenerator (Apply f ga) = map f $ enumGenerator ga
+  [(ChoiceKey True k, Left x) | (k, x) <- enumGenerator ga]
+    +++ [(ChoiceKey False k, Right x) | (k, x) <- enumGenerator gb]
+enumGenerator (Both ga gb) =
+  [ (BothKey k1 k2, (x, y))
+    | ((k1, x), (k2, y)) <- enumGenerator ga +*+ enumGenerator gb
+  ]
+enumGenerator (Apply f g) = map (second f) (enumGenerator g)
 
--- | generator for Bool
+rerunGenerator :: Generator a -> GenKey -> a
+rerunGenerator Trivial TrivialKey = ()
+rerunGenerator (Choice ga gb) (ChoiceKey b k)
+  | b = Left (rerunGenerator ga k)
+  | otherwise = Right (rerunGenerator gb k)
+rerunGenerator (Both ga gb) (BothKey k1 k2) =
+  (rerunGenerator ga k1, rerunGenerator gb k2)
+rerunGenerator (Apply f ga) k = f (rerunGenerator ga k)
+rerunGenerator _ _ = error "key doesn't match generator"
+
+unitGen :: Generator ()
+unitGen = Trivial
+
 boolGen :: Generator Bool
 boolGen = Apply isRight (Choice Trivial Trivial)
 
@@ -91,28 +101,45 @@ eitherGen = Choice
 pairGen :: Generator a -> Generator b -> Generator (a, b)
 pairGen = Both
 
-nbits :: Integral t => Int -> Generator t
-nbits 0 = pure 0
-nbits n = (\x y -> x * 2 + y) <$> nbits (n - 1) <*> oneBit
-  where
-    oneBit = bool 0 1 <$> boolGen
+listGen :: Generator a -> Generator [a]
+listGen g =
+  either (const []) (uncurry (:))
+    <$> Choice Trivial (Both g (listGen g))
+
+nbitsGen :: Integral t => Int -> Generator t
+nbitsGen 0 = pure 0
+nbitsGen n = (\x y -> x * 2 + bool 0 1 y) <$> nbitsGen (n - 1) <*> boolGen
 
 word8Gen :: Generator Word8
-word8Gen = nbits 8
+word8Gen = nbitsGen 8
 
 word16Gen :: Generator Word16
-word16Gen = nbits 16
+word16Gen = nbitsGen 16
+
+word32Gen :: Generator Word32
+word32Gen = nbitsGen 32
+
+word64Gen :: Generator Word64
+word64Gen = nbitsGen 64
 
 int8Gen :: Generator Int8
-int8Gen = nbits 8
+int8Gen = nbitsGen 16
+
+int16Gen :: Generator Int16
+int16Gen = nbitsGen 16
+
+int32Gen :: Generator Int32
+int32Gen = nbitsGen 32
+
+int64Gen :: Generator Int64
+int64Gen = nbitsGen 64
 
 integerGen :: Generator Integer
-integerGen = either (const 0) (either negate id) <$> (Choice Trivial (Choice natGen natGen))
+integerGen =
+  either (const 0) (either negate id)
+    <$> Choice Trivial (Choice posIntegerGen posIntegerGen)
 
-natGen :: Generator Integer -- strictly positive
-natGen =
+posIntegerGen :: Generator Integer
+posIntegerGen =
   either (const 1) (either (* 2) ((+ 1) . (* 2)))
-    <$> Choice Trivial (Choice natGen natGen)
-
-infiniteListGen :: Generator [()]
-infiniteListGen = Apply (either id (const [])) (Choice infiniteListGen Trivial)
+    <$> Choice Trivial (Choice posIntegerGen posIntegerGen)
