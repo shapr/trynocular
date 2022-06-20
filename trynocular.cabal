@@ -38,3 +38,13 @@ executable trynocular
     hs-source-dirs:   app
     default-language: GHC2021
     ghc-options:      -Wall
+
+test-suite trynocular-test
+    type:             exitcode-stdio-1.0
+    main-is:          Main.hs
+    build-depends:    base
+                    , hspec
+                    , trynocular
+    hs-source-dirs:   test
+    default-language: GHC2021
+    ghc-options:      -Wall
