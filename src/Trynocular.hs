@@ -4,7 +4,6 @@
 module Trynocular where
 
 import Control.Applicative (Alternative (..))
-import Data.Bifunctor (second)
 import Data.Char (chr)
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Kind (Type)
@@ -36,44 +35,48 @@ instance Alternative Generator where
 data GenKey = TrivialKey | ChoiceKey Bool GenKey | BothKey GenKey GenKey
   deriving (Eq, Ord, Show)
 
-runGenerator :: Generator a -> IO (Maybe (GenKey, a))
-runGenerator Empty = return Nothing
-runGenerator Trivial = pure (Just (TrivialKey, ()))
-runGenerator (Choice ga gb) = do
-  let left = fmap (\(k, x) -> (ChoiceKey True k, Left x)) <$> runGenerator ga
-      right = fmap (\(k, x) -> (ChoiceKey False k, Right x)) <$> runGenerator gb
+generateKey :: Generator a -> IO (Maybe GenKey)
+generateKey Empty = return Nothing
+generateKey Trivial = pure (Just TrivialKey)
+generateKey (Choice ga gb) = do
+  let left = fmap (ChoiceKey True) <$> generateKey ga
+      right = fmap (ChoiceKey False) <$> generateKey gb
   randomIO >>= \case
     True -> left >>= maybe right (pure . Just)
     False -> right >>= maybe left (pure . Just)
-runGenerator (Both ga gb) = do
-  left <- runGenerator ga
-  right <- runGenerator gb
+generateKey (Both ga gb) = do
+  left <- generateKey ga
+  right <- generateKey gb
   case (left, right) of
-    (Just (k1, x1), Just (k2, x2)) -> pure (Just (BothKey k1 k2, (x1, x2)))
+    (Just k1, Just k2) -> pure (Just (BothKey k1 k2))
     _ -> pure Nothing
-runGenerator (Apply f ga) = fmap (second f) <$> runGenerator ga
+generateKey (Apply _ ga) = generateKey ga
 
-enumGenerator :: Generator a -> [(GenKey, a)]
-enumGenerator Empty = []
-enumGenerator Trivial = [(TrivialKey, ())]
-enumGenerator (Choice ga gb) =
-  [(ChoiceKey True k, Left x) | (k, x) <- enumGenerator ga]
-    +++ [(ChoiceKey False k, Right x) | (k, x) <- enumGenerator gb]
-enumGenerator (Both ga gb) =
-  [ (BothKey k1 k2, (x, y))
-    | ((k1, x), (k2, y)) <- enumGenerator ga +*+ enumGenerator gb
-  ]
-enumGenerator (Apply f g) = map (second f) (enumGenerator g)
+enumerateKeys :: Generator a -> [GenKey]
+enumerateKeys Empty = []
+enumerateKeys Trivial = [TrivialKey]
+enumerateKeys (Choice ga gb) =
+  (ChoiceKey True <$> enumerateKeys ga)
+    +++ (ChoiceKey False <$> enumerateKeys gb)
+enumerateKeys (Both ga gb) =
+  uncurry BothKey <$> enumerateKeys ga +*+ enumerateKeys gb
+enumerateKeys (Apply _ g) = enumerateKeys g
 
-rerunGenerator :: Generator a -> GenKey -> a
-rerunGenerator Trivial TrivialKey = ()
-rerunGenerator (Choice ga gb) (ChoiceKey b k)
-  | b = Left (rerunGenerator ga k)
-  | otherwise = Right (rerunGenerator gb k)
-rerunGenerator (Both ga gb) (BothKey k1 k2) =
-  (rerunGenerator ga k1, rerunGenerator gb k2)
-rerunGenerator (Apply f ga) k = f (rerunGenerator ga k)
-rerunGenerator _ _ = error "key doesn't match generator"
+generateFromKey :: Generator a -> GenKey -> a
+generateFromKey Trivial TrivialKey = ()
+generateFromKey (Choice ga gb) (ChoiceKey b k)
+  | b = Left (generateFromKey ga k)
+  | otherwise = Right (generateFromKey gb k)
+generateFromKey (Both ga gb) (BothKey k1 k2) =
+  (generateFromKey ga k1, generateFromKey gb k2)
+generateFromKey (Apply f ga) k = f (generateFromKey ga k)
+generateFromKey _ _ = error "key doesn't match generator"
+
+generateValue :: Generator a -> IO (Maybe a)
+generateValue g = fmap (generateFromKey g) <$> generateKey g
+
+enumerateValues :: Generator a -> [a]
+enumerateValues g = generateFromKey g <$> enumerateKeys g
 
 genBits :: Integral t => Int -> Generator t
 genBits 0 = pure 0

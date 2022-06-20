@@ -7,12 +7,10 @@ import Trynocular
 main :: IO ()
 main = hspec $ do
   describe "gen" $ do
-    it "generates unit values" $
-      snd <$> enumGenerator gen `shouldBe` [()]
-    it "generates bool values" $
-      snd <$> enumGenerator gen `shouldBe` [False, True]
+    it "generates unit values" $ enumerateValues gen `shouldBe` [()]
+    it "generates bool values" $ enumerateValues gen `shouldBe` [False, True]
     it "generates words" $
-      snd <$> enumGenerator gen `shouldBe` ([0 .. 255] :: [Word8])
+      enumerateValues gen `shouldBe` ([0 .. 255] :: [Word8])
     it "generates lists" $
-      take 5 (snd <$> enumGenerator gen)
+      take 5 (enumerateValues gen)
         `shouldBe` [[], [()], [(), ()], [(), (), ()], [(), (), (), ()]]
