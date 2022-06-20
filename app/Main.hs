@@ -17,17 +17,17 @@ data Generator a
   = Empty
   | Trivial a
   | Choice (Generator a) (Generator a)
-  | forall b c. Both (b -> c -> a) (Generator b) (Generator c)
+  | forall b. Both (Generator (b -> a)) (Generator b)
 
 instance Functor Generator where
   fmap _ Empty = Empty
   fmap f (Trivial a) = Trivial (f a)
   fmap f (Choice g1 g2) = Choice (fmap f g1) (fmap f g2)
-  fmap f (Both f' g1 g2) = Both (\x y -> f (f' x y)) g1 g2
+  fmap f (Both g1 g2) = Both ((f .) <$> g1) g2
 
 instance Applicative Generator where
   pure = Trivial
-  a <*> b = Both ($) a b
+  (<*>) = Both
 
 instance Alternative Generator where
   empty = Empty
@@ -39,37 +39,37 @@ data GenKey = TrivialKey | ChoiceKey Bool GenKey | BothKey GenKey GenKey
 runGenerator :: Generator a -> IO (Maybe (GenKey, a))
 runGenerator Empty = return Nothing
 runGenerator (Trivial x) = pure (Just (TrivialKey, x))
-runGenerator (Choice ga gb) = do
-  let left = fmap (\(k, x) -> (ChoiceKey True k, x)) <$> runGenerator ga
-      right = fmap (\(k, x) -> (ChoiceKey False k, x)) <$> runGenerator gb
+runGenerator (Choice a b) = do
+  let left = fmap (\(k, x) -> (ChoiceKey True k, x)) <$> runGenerator a
+      right = fmap (\(k, x) -> (ChoiceKey False k, x)) <$> runGenerator b
   randomIO >>= \case
     True -> left >>= maybe right (pure . Just)
     False -> right >>= maybe left (pure . Just)
-runGenerator (Both f ga gb) = do
-  left <- runGenerator ga
-  right <- runGenerator gb
+runGenerator (Both a b) = do
+  left <- runGenerator a
+  right <- runGenerator b
   case (left, right) of
-    (Just (k1, x1), Just (k2, x2)) -> pure (Just (BothKey k1 k2, f x1 x2))
+    (Just (k1, f), Just (k2, x)) -> pure (Just (BothKey k1 k2, f x))
     _ -> pure Nothing
 
 enumGenerator :: Generator a -> [(GenKey, a)]
 enumGenerator Empty = []
 enumGenerator (Trivial x) = [(TrivialKey, x)]
-enumGenerator (Choice ga gb) =
-  (first (ChoiceKey True) <$> enumGenerator ga)
-    +++ (first (ChoiceKey False) <$> enumGenerator gb)
-enumGenerator (Both f ga gb) =
-  [ (BothKey k1 k2, f x y)
-    | ((k1, x), (k2, y)) <- enumGenerator ga +*+ enumGenerator gb
+enumGenerator (Choice a b) =
+  (first (ChoiceKey True) <$> enumGenerator a)
+    +++ (first (ChoiceKey False) <$> enumGenerator b)
+enumGenerator (Both a b) =
+  [ (BothKey k1 k2, f x)
+    | ((k1, f), (k2, x)) <- enumGenerator a +*+ enumGenerator b
   ]
 
 rerunGenerator :: Generator a -> GenKey -> a
 rerunGenerator (Trivial x) TrivialKey = x
-rerunGenerator (Choice ga gb) (ChoiceKey b k)
-  | b = rerunGenerator ga k
-  | otherwise = rerunGenerator gb k
-rerunGenerator (Both f ga gb) (BothKey k1 k2) =
-  f (rerunGenerator ga k1) (rerunGenerator gb k2)
+rerunGenerator (Choice a b) (ChoiceKey goLeft k)
+  | goLeft = rerunGenerator a k
+  | otherwise = rerunGenerator b k
+rerunGenerator (Both a b) (BothKey k1 k2) =
+  (rerunGenerator a k1) (rerunGenerator b k2)
 rerunGenerator _ _ = error "key doesn't match generator"
 
 genBits :: Integral t => Int -> Generator t
