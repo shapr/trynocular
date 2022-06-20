@@ -1,12 +1,14 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Main where
 
+import Control.Applicative (Alternative (..))
 import Data.Bifunctor (second)
-import Data.Bool (bool)
-import Data.Either
+import Data.Char (chr)
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Universe.Helpers ((+*+), (+++))
+import Data.Void (Void, absurd)
 import Data.Word (Word16, Word32, Word64, Word8)
 import System.Random
 
@@ -14,6 +16,7 @@ main :: IO ()
 main = putStrLn "Hello, Haskell!"
 
 data Generator a where
+  Empty :: Generator Void
   Trivial :: Generator ()
   Choice :: Generator a -> Generator b -> Generator (Either a b)
   Both :: Generator a -> Generator b -> Generator (a, b)
@@ -22,50 +25,38 @@ data Generator a where
 -- | fmap id should be id, fmap id here will be Apply id ? which is a different
 -- term than the input.  If constructors are not exported, the Functor law holds
 -- up to observable behavior.
-instance Functor Generator where
-  fmap :: (a -> b) -> Generator a -> Generator b
-  fmap = Apply
+instance Functor Generator where fmap = Apply
 
 instance Applicative Generator where
-  pure :: a -> Generator a
-  pure a = Apply (const a) Trivial
-  (<*>) :: Generator (d -> e) -> Generator d -> Generator e
+  pure x = const x <$> Trivial
   a <*> b = Apply (uncurry ($)) (Both a b)
+
+instance Alternative Generator where
+  empty = Apply absurd Empty
+  a <|> b = Apply (either id id) (Choice a b)
 
 data GenKey = TrivialKey | ChoiceKey Bool GenKey | BothKey GenKey GenKey
   deriving (Eq, Ord, Show)
 
-serializeKey :: GenKey -> [Bool]
-serializeKey TrivialKey = []
-serializeKey (ChoiceKey b k) = b : serializeKey k
-serializeKey (BothKey k1 k2) = serializeKey k1 ++ serializeKey k2
-
-deserializeKey :: Generator a -> [Bool] -> (GenKey, [Bool])
-deserializeKey Trivial xs = (TrivialKey, xs)
-deserializeKey (Choice a _) (True : xs) =
-  let (k, xs') = deserializeKey a xs in (ChoiceKey True k, xs')
-deserializeKey (Choice _ b) (False : xs) =
-  let (k, xs') = deserializeKey b xs in (ChoiceKey False k, xs')
-deserializeKey (Both a b) xs =
-  let (k1, xs') = deserializeKey a xs
-   in let (k2, xs'') = deserializeKey b xs'
-       in (BothKey k1 k2, xs'')
-deserializeKey (Apply _ a) xs = deserializeKey a xs
-deserializeKey (Choice _ _) [] = error "serialized key too short"
-
-runGenerator :: Generator a -> IO (GenKey, a)
-runGenerator Trivial = pure (TrivialKey, ())
+runGenerator :: Generator a -> IO (Maybe (GenKey, a))
+runGenerator Empty = return Nothing
+runGenerator Trivial = pure (Just (TrivialKey, ()))
 runGenerator (Choice ga gb) = do
-  b <- randomIO
-  if b
-    then (\(k, x) -> (ChoiceKey True k, Left x)) <$> runGenerator ga
-    else (\(k, x) -> (ChoiceKey False k, Right x)) <$> runGenerator gb
-runGenerator (Both ga gb) =
-  (\(k1, x1) (k2, x2) -> (BothKey k1 k2, (x1, x2)))
-    <$> runGenerator ga <*> runGenerator gb
-runGenerator (Apply f ga) = (\(k, x) -> (k, f x)) <$> runGenerator ga
+  let left = fmap (\(k, x) -> (ChoiceKey True k, Left x)) <$> runGenerator ga
+      right = fmap (\(k, x) -> (ChoiceKey False k, Right x)) <$> runGenerator gb
+  randomIO >>= \case
+    True -> left >>= maybe right (pure . Just)
+    False -> right >>= maybe left (pure . Just)
+runGenerator (Both ga gb) = do
+  left <- runGenerator ga
+  right <- runGenerator gb
+  case (left, right) of
+    (Just (k1, x1), Just (k2, x2)) -> pure (Just (BothKey k1 k2, (x1, x2)))
+    _ -> pure Nothing
+runGenerator (Apply f ga) = fmap (second f) <$> runGenerator ga
 
 enumGenerator :: Generator a -> [(GenKey, a)]
+enumGenerator Empty = []
 enumGenerator Trivial = [(TrivialKey, ())]
 enumGenerator (Choice ga gb) =
   [(ChoiceKey True k, Left x) | (k, x) <- enumGenerator ga]
@@ -86,95 +77,52 @@ rerunGenerator (Both ga gb) (BothKey k1 k2) =
 rerunGenerator (Apply f ga) k = f (rerunGenerator ga k)
 rerunGenerator _ _ = error "key doesn't match generator"
 
-unitGen :: Generator ()
-unitGen = Trivial
+genBits :: Integral t => Int -> Generator t
+genBits 0 = pure 0
+genBits n = (\x b -> 2 * x + b) <$> genBits (n - 1) <*> (pure 0 <|> pure 1)
 
-boolGen :: Generator Bool
-boolGen = Apply isRight (Choice Trivial Trivial)
-
-maybeGen :: Generator a -> Generator (Maybe a)
-maybeGen g = either (const Nothing) Just <$> Choice Trivial g
-
-eitherGen :: Generator a -> Generator b -> Generator (Either a b)
-eitherGen = Choice
-
-pairGen :: Generator a -> Generator b -> Generator (a, b)
-pairGen = Both
-
-listGen :: Generator a -> Generator [a]
-listGen g =
-  either (const []) (uncurry (:))
-    <$> Choice Trivial (Both g (listGen g))
-
-nbitsGen :: Integral t => Int -> Generator t
-nbitsGen 0 = pure 0
-nbitsGen n = (\x y -> x * 2 + bool 0 1 y) <$> nbitsGen (n - 1) <*> boolGen
-
-word8Gen :: Generator Word8
-word8Gen = nbitsGen 8
-
-word16Gen :: Generator Word16
-word16Gen = nbitsGen 16
-
-word32Gen :: Generator Word32
-word32Gen = nbitsGen 32
-
-word64Gen :: Generator Word64
-word64Gen = nbitsGen 64
-
-int8Gen :: Generator Int8
-int8Gen = nbitsGen 16
-
-int16Gen :: Generator Int16
-int16Gen = nbitsGen 16
-
-int32Gen :: Generator Int32
-int32Gen = nbitsGen 32
-
-int64Gen :: Generator Int64
-int64Gen = nbitsGen 64
-
-integerGen :: Generator Integer
-integerGen =
-  either (const 0) (either negate id)
-    <$> Choice Trivial (Choice posIntegerGen posIntegerGen)
-
-posIntegerGen :: Generator Integer
-posIntegerGen =
-  either (const 1) (either (* 2) ((+ 1) . (* 2)))
-    <$> Choice Trivial (Choice posIntegerGen posIntegerGen)
+genPositive :: Generator Integer
+genPositive =
+  pure 1
+    <|> (* 2) <$> genPositive
+    <|> (\n -> 2 * n + 1) <$> genPositive
 
 class Generable a where gen :: Generator a
 
-instance Generable () where gen = unitGen
+instance Generable () where gen = pure ()
 
-instance Generable Bool where gen = boolGen
+instance Generable Bool where gen = pure False <|> pure True
 
-instance Generable Word8 where gen = word8Gen
+instance Generable Char where
+  gen = chr <$> (genBits 20 <|> (+ 0x100000) <$> genBits 16)
 
-instance Generable Word16 where gen = word16Gen
+instance Generable Word8 where gen = genBits 8
 
-instance Generable Word32 where gen = word32Gen
+instance Generable Word16 where gen = genBits 16
 
-instance Generable Word64 where gen = word64Gen
+instance Generable Word32 where gen = genBits 32
 
-instance Generable Int8 where gen = int8Gen
+instance Generable Word64 where gen = genBits 64
 
-instance Generable Int16 where gen = int16Gen
+instance Generable Int8 where gen = genBits 8
 
-instance Generable Int32 where gen = int32Gen
+instance Generable Int16 where gen = genBits 16
 
-instance Generable Int64 where gen = int64Gen
+instance Generable Int32 where gen = genBits 32
 
-instance Generable Integer where gen = integerGen
+instance Generable Int64 where gen = genBits 64
 
-instance Generable a => Generable (Maybe a) where gen = maybeGen gen
+instance Generable Integer where
+  gen = pure 0 <|> genPositive <|> negate <$> genPositive
+
+instance Generable a => Generable (Maybe a) where
+  gen = pure Nothing <|> Just <$> gen
 
 instance (Generable a, Generable b) => Generable (Either a b) where
-  gen = eitherGen gen gen
+  gen = Left <$> gen <|> Right <$> gen
 
 instance (Generable a, Generable b) => Generable (a, b) where
-  gen = pairGen gen gen
+  gen = (,) <$> gen <*> gen
 
 instance Generable a => Generable [a] where
-  gen = listGen gen
+  gen = pure [] <|> ((:) <$> gen <*> gen)
