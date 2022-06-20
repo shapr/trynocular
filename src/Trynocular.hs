@@ -102,7 +102,7 @@ class Generable a where
     genAny :: Generator a
 
     default genAny :: (Generic a, GenericGenerable (Rep a)) => Generator a
-    genAny = to <$> genericGen
+    genAny = to <$> genGenericRep
 
 instance Generable () where genAny = pure ()
 
@@ -142,29 +142,29 @@ instance (Generable a, Generable b) => Generable (a, b) where
 instance Generable a => Generable [a] where
   genAny = pure [] <|> ((:) <$> genAny <*> genAny)
 
-class GenericGenerable f where genericGen :: Generator (f p)
+class GenericGenerable f where genGenericRep :: Generator (f p)
 
-instance GenericGenerable V1 where genericGen = absurd <$> Empty
+instance GenericGenerable V1 where genGenericRep = empty
 
-instance GenericGenerable U1 where genericGen = const U1 <$> Trivial
+instance GenericGenerable U1 where genGenericRep = pure U1
 
 instance
   (GenericGenerable f, GenericGenerable g) =>
   GenericGenerable (f :+: g)
   where
-  genericGen = either L1 R1 <$> Choice genericGen genericGen
+  genGenericRep = L1 <$> genGenericRep <|> R1 <$> genGenericRep
 
 instance
   (GenericGenerable f, GenericGenerable g) =>
   GenericGenerable (f :*: g)
   where
-  genericGen = uncurry (:*:) <$> Both genericGen genericGen
+  genGenericRep = (:*:) <$> genGenericRep <*> genGenericRep
 
 instance Generable a => GenericGenerable (K1 i a) where
-  genericGen = K1 <$> genAny
+  genGenericRep = K1 <$> genAny
 
 instance GenericGenerable f => GenericGenerable (M1 i t f) where
-  genericGen = M1 <$> genericGen
+  genGenericRep = M1 <$> genGenericRep
 
 genGeneric :: (Generic a, GenericGenerable (Rep a)) => Generator a
-genGeneric = to <$> genericGen
+genGeneric = to <$> genGenericRep
