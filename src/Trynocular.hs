@@ -88,42 +88,42 @@ genPositive =
     <|> (* 2) <$> genPositive
     <|> (\n -> 2 * n + 1) <$> genPositive
 
-class Generable a where gen :: Generator a
+class Generable a where genAny :: Generator a
 
-instance Generable () where gen = pure ()
+instance Generable () where genAny = pure ()
 
-instance Generable Bool where gen = pure False <|> pure True
+instance Generable Bool where genAny = pure False <|> pure True
 
 instance Generable Char where
-  gen = chr <$> (genBits 20 <|> (+ 0x100000) <$> genBits 16)
+  genAny = chr <$> (genBits 20 <|> (+ 0x100000) <$> genBits 16)
 
-instance Generable Word8 where gen = genBits 8
+instance Generable Word8 where genAny = genBits 8
 
-instance Generable Word16 where gen = genBits 16
+instance Generable Word16 where genAny = genBits 16
 
-instance Generable Word32 where gen = genBits 32
+instance Generable Word32 where genAny = genBits 32
 
-instance Generable Word64 where gen = genBits 64
+instance Generable Word64 where genAny = genBits 64
 
-instance Generable Int8 where gen = genBits 8
+instance Generable Int8 where genAny = genBits 8
 
-instance Generable Int16 where gen = genBits 16
+instance Generable Int16 where genAny = genBits 16
 
-instance Generable Int32 where gen = genBits 32
+instance Generable Int32 where genAny = genBits 32
 
-instance Generable Int64 where gen = genBits 64
+instance Generable Int64 where genAny = genBits 64
 
 instance Generable Integer where
-  gen = pure 0 <|> genPositive <|> negate <$> genPositive
+  genAny = pure 0 <|> genPositive <|> negate <$> genPositive
 
 instance Generable a => Generable (Maybe a) where
-  gen = pure Nothing <|> Just <$> gen
+  genAny = pure Nothing <|> Just <$> genAny
 
 instance (Generable a, Generable b) => Generable (Either a b) where
-  gen = Left <$> gen <|> Right <$> gen
+  genAny = Left <$> genAny <|> Right <$> genAny
 
 instance (Generable a, Generable b) => Generable (a, b) where
-  gen = (,) <$> gen <*> gen
+  genAny = (,) <$> genAny <*> genAny
 
 instance Generable a => Generable [a] where
-  gen = pure [] <|> ((:) <$> gen <*> gen)
+  genAny = pure [] <|> ((:) <$> genAny <*> genAny)
