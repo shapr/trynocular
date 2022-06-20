@@ -102,7 +102,7 @@ class Generable a where
     genAny :: Generator a
 
     default genAny :: (Generic a, GenericGenerable (Rep a)) => Generator a
-    genAny = to <$> genGenericRep
+    genAny = genGeneric
 
 instance Generable () where genAny = pure ()
 
