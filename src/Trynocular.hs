@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module Trynocular where
 
@@ -10,6 +11,15 @@ import Data.Kind (Type)
 import Data.Universe.Helpers ((+*+), (+++))
 import Data.Void (Void, absurd)
 import Data.Word (Word16, Word32, Word64, Word8)
+import GHC.Generics
+  ( Generic (..),
+    K1 (..),
+    M1 (..),
+    U1 (..),
+    V1,
+    (:*:) (..),
+    (:+:) (..),
+  )
 import System.Random
 
 data Generator :: Type -> Type where
@@ -88,7 +98,11 @@ genPositive =
     <|> (* 2) <$> genPositive
     <|> (\n -> 2 * n + 1) <$> genPositive
 
-class Generable a where genAny :: Generator a
+class Generable a where
+    genAny :: Generator a
+
+    default genAny :: (Generic a, GenericGenerable (Rep a)) => Generator a
+    genAny = to <$> genericGen
 
 instance Generable () where genAny = pure ()
 
@@ -127,3 +141,30 @@ instance (Generable a, Generable b) => Generable (a, b) where
 
 instance Generable a => Generable [a] where
   genAny = pure [] <|> ((:) <$> genAny <*> genAny)
+
+class GenericGenerable f where genericGen :: Generator (f p)
+
+instance GenericGenerable V1 where genericGen = absurd <$> Empty
+
+instance GenericGenerable U1 where genericGen = const U1 <$> Trivial
+
+instance
+  (GenericGenerable f, GenericGenerable g) =>
+  GenericGenerable (f :+: g)
+  where
+  genericGen = either L1 R1 <$> Choice genericGen genericGen
+
+instance
+  (GenericGenerable f, GenericGenerable g) =>
+  GenericGenerable (f :*: g)
+  where
+  genericGen = uncurry (:*:) <$> Both genericGen genericGen
+
+instance Generable a => GenericGenerable (K1 i a) where
+  genericGen = K1 <$> genAny
+
+instance GenericGenerable f => GenericGenerable (M1 i t f) where
+  genericGen = M1 <$> genericGen
+
+genGeneric :: (Generic a, GenericGenerable (Rep a)) => Generator a
+genGeneric = to <$> genericGen
