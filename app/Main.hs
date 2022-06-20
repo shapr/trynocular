@@ -7,6 +7,7 @@ import Control.Applicative (Alternative (..))
 import Data.Bifunctor (second)
 import Data.Char (chr)
 import Data.Int (Int16, Int32, Int64, Int8)
+import Data.Kind (Type)
 import Data.Universe.Helpers ((+*+), (+++))
 import Data.Void (Void, absurd)
 import Data.Word (Word16, Word32, Word64, Word8)
@@ -15,7 +16,7 @@ import System.Random
 main :: IO ()
 main = putStrLn "Hello, Haskell!"
 
-data Generator a where
+data Generator :: Type -> Type where
   Empty :: Generator Void
   Trivial :: Generator ()
   Choice :: Generator a -> Generator b -> Generator (Either a b)
@@ -28,7 +29,7 @@ data Generator a where
 instance Functor Generator where fmap = Apply
 
 instance Applicative Generator where
-  pure x = const x <$> Trivial
+  pure x = Apply (const x) Trivial
   a <*> b = Apply (uncurry ($)) (Both a b)
 
 instance Alternative Generator where
