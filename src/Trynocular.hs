@@ -1,6 +1,6 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE DefaultSignatures #-}
 
 module Trynocular where
 
@@ -99,10 +99,9 @@ genPositive =
     <|> (\n -> 2 * n + 1) <$> genPositive
 
 class Generable a where
-    genAny :: Generator a
-
-    default genAny :: (Generic a, GenericGenerable (Rep a)) => Generator a
-    genAny = genGeneric
+  genAny :: Generator a
+  default genAny :: (Generic a, GenericGenerable (Rep a)) => Generator a
+  genAny = genGeneric
 
 instance Generable () where genAny = pure ()
 
@@ -138,6 +137,15 @@ instance (Generable a, Generable b) => Generable (Either a b) where
 
 instance (Generable a, Generable b) => Generable (a, b) where
   genAny = (,) <$> genAny <*> genAny
+
+instance (Generable a, Generable b, Generable c) => Generable (a, b, c) where
+  genAny = (,,) <$> genAny <*> genAny <*> genAny
+
+instance (Generable a, Generable b, Generable c, Generable d) => Generable (a, b, c, d) where
+  genAny = (,,,) <$> genAny <*> genAny <*> genAny <*> genAny
+
+instance (Generable a, Generable b, Generable c, Generable d, Generable e) => Generable (a, b, c, d, e) where
+  genAny = (,,,,) <$> genAny <*> genAny <*> genAny <*> genAny <*> genAny
 
 instance Generable a => Generable [a] where
   genAny = pure [] <|> ((:) <$> genAny <*> genAny)
