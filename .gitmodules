@@ -1,0 +1,3 @@
+[submodule "thirdparty/StrictCheck"]
+	path = thirdparty/StrictCheck
+	url = git@github.com:shapr/StrictCheck.git
