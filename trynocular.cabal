@@ -42,9 +42,12 @@ executable trynocular
 test-suite trynocular-test
     type:             exitcode-stdio-1.0
     main-is:          Main.hs
+    other-modules:    StrictUtil
     build-depends:    base
+                    , generics-sop
                     , hspec
                     , trynocular
+                    , QuickCheck
                     , StrictCheck
     hs-source-dirs:   test
     default-language: GHC2021
