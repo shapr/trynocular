@@ -27,6 +27,7 @@ library
     exposed-modules:  Trynocular
     build-depends:    base
                     , random
+                    , semigroupoids
                     , universe-base
     hs-source-dirs:   src
     default-language: GHC2021

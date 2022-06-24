@@ -5,26 +5,23 @@
 
 module Trynocular where
 
-import Control.Applicative (Alternative (..))
 import Data.Char (chr, ord)
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Kind (Type)
 import Data.Universe.Helpers ((+*+), (+++))
-import Data.Void (Void, absurd)
 import Data.Word (Word16, Word32, Word64, Word8)
 import GHC.Generics
   ( Generic (..),
     K1 (..),
     M1 (..),
     U1 (..),
-    V1,
     (:*:) (..),
     (:+:) (..),
   )
 import System.Random (randomIO)
+import Data.Functor.Alt (Alt ((<!>)))
 
 data Generator :: Type -> Type where
-  Empty :: Generator Void
   Trivial :: Generator ()
   Choice :: Generator a -> Generator b -> Generator (Either a b)
   Both :: Generator a -> Generator b -> Generator (a, b)
@@ -39,9 +36,8 @@ instance Applicative Generator where
   pure x = Apply (\() -> x) Trivial
   a <*> b = Apply (uncurry ($)) (Both a b)
 
-instance Alternative Generator where
-  empty = Apply absurd Empty
-  a <|> b = Apply (either id id) (Choice a b)
+instance Alt Generator where
+  a <!> b = Apply (either id id) (Choice a b)
 
 data GenKey
   = TrivialKey
@@ -50,25 +46,16 @@ data GenKey
   | BothKey GenKey GenKey
   deriving (Eq, Ord, Show)
 
-generateKey :: Generator a -> IO (Maybe GenKey)
-generateKey Empty = return Nothing
-generateKey Trivial = pure (Just TrivialKey)
-generateKey (Choice ga gb) = do
-  let left = fmap LeftKey <$> generateKey ga
-      right = fmap RightKey <$> generateKey gb
+generateKey :: Generator a -> IO GenKey
+generateKey Trivial = pure TrivialKey
+generateKey (Choice ga gb) =
   randomIO >>= \case
-    True -> left >>= maybe right (pure . Just)
-    False -> right >>= maybe left (pure . Just)
-generateKey (Both ga gb) = do
-  left <- generateKey ga
-  right <- generateKey gb
-  case (left, right) of
-    (Just k1, Just k2) -> pure (Just (BothKey k1 k2))
-    _ -> pure Nothing
+    True -> LeftKey <$> generateKey ga
+    False -> RightKey <$> generateKey gb
+generateKey (Both ga gb) = BothKey <$> generateKey ga <*> generateKey gb
 generateKey (Apply _ ga) = generateKey ga
 
 enumerateKeys :: Generator a -> [GenKey]
-enumerateKeys Empty = []
 enumerateKeys Trivial = [TrivialKey]
 enumerateKeys (Choice ga gb) =
   (LeftKey <$> enumerateKeys ga) +++ (RightKey <$> enumerateKeys gb)
@@ -85,8 +72,8 @@ generateFromKey (Both ga gb) (BothKey k1 k2) =
 generateFromKey (Apply f ga) k = f (generateFromKey ga k)
 generateFromKey _ _ = error "key doesn't match generator"
 
-generateValue :: Generator a -> IO (Maybe a)
-generateValue g = fmap (generateFromKey g) <$> generateKey g
+generateValue :: Generator a -> IO a
+generateValue g = generateFromKey g <$> generateKey g
 
 enumerateValues :: Generator a -> [a]
 enumerateValues g = generateFromKey g <$> enumerateKeys g
@@ -96,8 +83,8 @@ genRange (lo, hi) = fromInteger . (+ lo) <$> go (hi - lo + 1)
   where
     go 1 = pure 0
     go n
-      | even n = (\x b -> 2 * x + b) <$> go (n `div` 2) <*> (pure 0 <|> pure 1)
-      | otherwise = pure 0 <|> (succ <$> go (n - 1))
+      | even n = (\x b -> 2 * x + b) <$> go (n `div` 2) <*> (pure 0 <!> pure 1)
+      | otherwise = pure 0 <!> (succ <$> go (n - 1))
 
 toGenKeyRange :: Integral t => (Integer, Integer) -> t -> GenKey
 toGenKeyRange (lo, hi) = go (hi - lo + 1) . subtract lo . toInteger
@@ -128,8 +115,8 @@ toGenKeyBounded =
 genPositive :: Generator Integer
 genPositive =
   pure 1
-    <|> (* 2) <$> genPositive
-    <|> (\n -> 2 * n + 1) <$> genPositive
+    <!> (* 2) <$> genPositive
+    <!> (\n -> 2 * n + 1) <$> genPositive
 
 toGenKeyPositive :: Integer -> GenKey
 toGenKeyPositive x
@@ -151,7 +138,7 @@ instance Generable () where
   toGenKey () = TrivialKey
 
 instance Generable Bool where
-  genAny = pure False <|> pure True
+  genAny = pure False <!> pure True
   toGenKey False = LeftKey TrivialKey
   toGenKey True = RightKey TrivialKey
 
@@ -200,19 +187,19 @@ instance Generable Int where
   toGenKey = toGenKeyBounded
 
 instance Generable Integer where
-  genAny = pure 0 <|> genPositive <|> negate <$> genPositive
+  genAny = pure 0 <!> genPositive <!> negate <$> genPositive
   toGenKey x
     | x == 0 = LeftKey (LeftKey TrivialKey)
     | x > 0 = LeftKey (RightKey (toGenKeyPositive x))
     | otherwise = RightKey (toGenKeyPositive (-x))
 
 instance Generable a => Generable (Maybe a) where
-  genAny = pure Nothing <|> Just <$> genAny
+  genAny = pure Nothing <!> Just <$> genAny
   toGenKey Nothing = LeftKey TrivialKey
   toGenKey (Just x) = RightKey (toGenKey x)
 
 instance (Generable a, Generable b) => Generable (Either a b) where
-  genAny = Left <$> genAny <|> Right <$> genAny
+  genAny = Left <$> genAny <!> Right <$> genAny
   toGenKey (Left x) = LeftKey (toGenKey x)
   toGenKey (Right x) = RightKey (toGenKey x)
 
@@ -248,17 +235,13 @@ instance
       (toGenKey e)
 
 instance Generable a => Generable [a] where
-  genAny = pure [] <|> ((:) <$> genAny <*> genAny)
+  genAny = pure [] <!> ((:) <$> genAny <*> genAny)
   toGenKey [] = LeftKey TrivialKey
   toGenKey (x : xs) = RightKey (BothKey (toGenKey x) (toGenKey xs))
 
 class GenericGenerable f where
   genGenericRep :: Generator (f p)
   toGenKeyGenericRep :: f p -> GenKey
-
-instance GenericGenerable V1 where
-  genGenericRep = empty
-  toGenKeyGenericRep v = case v of {}
 
 instance GenericGenerable U1 where
   genGenericRep = pure U1
@@ -268,7 +251,7 @@ instance
   (GenericGenerable f, GenericGenerable g) =>
   GenericGenerable (f :+: g)
   where
-  genGenericRep = L1 <$> genGenericRep <|> R1 <$> genGenericRep
+  genGenericRep = L1 <$> genGenericRep <!> R1 <$> genGenericRep
   toGenKeyGenericRep (L1 x) = LeftKey (toGenKeyGenericRep x)
   toGenKeyGenericRep (R1 y) = RightKey (toGenKeyGenericRep y)
 
