@@ -5,15 +5,15 @@
 
 -- | TODO: Module documentation
 module Trynocular
-  ( -- * The 'Generator' and 'GenKey' types
+  ( -- * The 'Generator' and 'Key' types
     Generator,
-    GenKey (..),
+    Key (..),
 
     -- * Operations on 'Generator'
-    pickGenKey,
-    genKeys,
-    fromGenKey,
-    toGenKey,
+    pickKey,
+    keys,
+    fromKey,
+    toKey,
     pickValue,
     values,
 
@@ -54,8 +54,8 @@ import System.Random (randomIO)
 import System.IO.Unsafe (unsafeInterleaveIO)
 
 -- | A 'Generator' for a type knows how to enumerate or pick values for the
--- type, as well as how to represent values of the type as 'GenKey's.  The
--- representation as 'GenKey's is witnessed by 'toGenKey' and 'fromGenKey'.
+-- type, as well as how to represent values of the type as 'Key's.  The
+-- representation as 'Key's is witnessed by 'toKey' and 'fromKey'.
 -- This correspondence preserves not only equality, but strictness as well.
 data Generator :: Type -> Type where
   Trivial :: Generator ()
@@ -68,85 +68,85 @@ instance Invariant Generator where
 
 -- | A key (intuitively, a record of paths taken in a decision tree) that
 -- uniquely identifies a value produced by a Generator.
-data GenKey
+data Key
   = TrivialKey
-  | LeftKey GenKey
-  | RightKey GenKey
-  | BothKey GenKey GenKey
+  | LeftKey Key
+  | RightKey Key
+  | BothKey Key Key
   deriving (Eq, Ord, Show)
 
--- | Choose a single 'GenKey' corresponding to a value from a 'Generator'.
+-- | Choose a single 'Key' corresponding to a value from a 'Generator'.
 --
 -- This uses lazy IO to generate the random path, so it is cheap if you don't
 -- force too much of the resulting key.
-pickGenKey :: Generator a -> IO GenKey
-pickGenKey = unsafeInterleaveIO . go
+pickKey :: Generator a -> IO Key
+pickKey = unsafeInterleaveIO . go
   where
-    go :: Generator a -> IO GenKey
+    go :: Generator a -> IO Key
     go Trivial = pure TrivialKey
     go (Choice ga gb) =
       randomIO >>= \case
-        True -> LeftKey <$> pickGenKey ga
-        False -> RightKey <$> pickGenKey gb
-    go (Both ga gb) = BothKey <$> pickGenKey ga <*> pickGenKey gb
+        True -> LeftKey <$> pickKey ga
+        False -> RightKey <$> pickKey gb
+    go (Both ga gb) = BothKey <$> pickKey ga <*> pickKey gb
     go (Apply _ _ ga) = go ga
 
--- | List all 'GenKey's corresponding to values from a 'Generator'.
+-- | List all 'Key's corresponding to values from a 'Generator'.
 --
 -- TODO: This currently fails on generators that contain infinite paths in the
 -- left branch of a choice. See issue #1.
-genKeys :: Generator a -> [GenKey]
-genKeys Trivial = [TrivialKey]
-genKeys (Choice ga gb) =
-  (LeftKey <$> genKeys ga) +++ (RightKey <$> genKeys gb)
-genKeys (Both ga gb) =
-  uncurry BothKey <$> genKeys ga +*+ genKeys gb
-genKeys (Apply _ _ g) = genKeys g
+keys :: Generator a -> [Key]
+keys Trivial = [TrivialKey]
+keys (Choice ga gb) =
+  (LeftKey <$> keys ga) +++ (RightKey <$> keys gb)
+keys (Both ga gb) =
+  uncurry BothKey <$> keys ga +*+ keys gb
+keys (Apply _ _ g) = keys g
 
--- | Using a 'Generator', convert a 'GenKey' to a value.
+-- | Using a 'Generator', convert a 'Key' to a value.
 --
--- This is a partial function.  If the provided 'GenKey' is not compatible with
+-- This is a partial function.  If the provided 'Key' is not compatible with
 -- the given generator, it will fail to return a total value.
 --
 -- The conversion preserves strictness, in the sense that it forces only enough
 -- of the key to satisfy the demand on the resulting value.  In particular, one
--- should have @'fromGenKey' g . 'toGenKey' g == 'id'@ on any value produced by
+-- should have @'fromKey' g . 'toKey' g == 'id'@ on any value produced by
 -- the generator @g@, not just in equality but in strictness as well.
-fromGenKey :: Generator a -> GenKey -> a
-fromGenKey Trivial TrivialKey = ()
-fromGenKey (Choice ga _) (LeftKey k) = Left (fromGenKey ga k)
-fromGenKey (Choice _ gb) (RightKey k) = Right (fromGenKey gb k)
-fromGenKey (Both ga gb) (BothKey k1 k2) =
-  (fromGenKey ga k1, fromGenKey gb k2)
-fromGenKey (Apply f _ ga) k = f (fromGenKey ga k)
-fromGenKey _ _ = error "key doesn't match generator"
+fromKey :: Generator a -> Key -> a
+fromKey Trivial TrivialKey = ()
+fromKey (Choice ga _) (LeftKey k) = Left (fromKey ga k)
+fromKey (Choice _ gb) (RightKey k) = Right (fromKey gb k)
+fromKey (Both ga gb) (BothKey k1 k2) =
+  (fromKey ga k1, fromKey gb k2)
+fromKey (Apply f _ ga) k = f (fromKey ga k)
+fromKey _ _ = error "key doesn't match generator"
 
--- | Using a 'Generator', convert a value to a 'GenKey'.
+-- | Using a 'Generator', convert a value to a 'Key'.
 --
 -- The conversion preserves strictness, in the sense that it forces only enough
 -- of the value to satisfy the demand on the resulting key.  In particular, one
--- should have @'fromGenKey' g . 'toGenKey' g == 'id'@ on any value produced by
+-- should have @'fromKey' g . 'toKey' g == 'id'@ on any value produced by
 -- the generator @g@, not just in equality but in strictness as well.
-toGenKey :: Generator a -> a -> GenKey
-toGenKey Trivial () = TrivialKey
-toGenKey (Choice ga _) (Left a) = LeftKey (toGenKey ga a)
-toGenKey (Choice _ gb) (Right b) = RightKey (toGenKey gb b)
-toGenKey (Both ga gb) (a, b) = BothKey (toGenKey ga a) (toGenKey gb b)
-toGenKey (Apply _ f g) x = toGenKey g (f x)
+toKey :: Generator a -> a -> Key
+toKey Trivial () = TrivialKey
+toKey (Choice ga _) (Left a) = LeftKey (toKey ga a)
+toKey (Choice _ gb) (Right b) = RightKey (toKey gb b)
+toKey (Both ga gb) (a, b) = BothKey (toKey ga a) (toKey gb b)
+toKey (Apply _ f g) x = toKey g (f x)
 
 -- | Pick a value from a 'Generator'.
 --
 -- This uses lazy IO to make random choices, so it is cheap if you don't force
 -- too much of the resulting value.
 pickValue :: Generator a -> IO a
-pickValue g = fromGenKey g <$> pickGenKey g
+pickValue g = fromKey g <$> pickKey g
 
 -- | List all values for a 'Generator'.
 --
 -- TODO: This currently fails on generators that contain infinite paths in the
 -- left branch of a choice. See issue #1.
 values :: Generator a -> [a]
-values g = fromGenKey g <$> genKeys g
+values g = fromKey g <$> keys g
 
 -- | A 'Generator' that always generates the same value.
 --

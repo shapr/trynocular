@@ -11,7 +11,7 @@ import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
 import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
-import Trynocular (Generable (..), Generator, fromGenKey, toGenKey, values, pickGenKey)
+import Trynocular (Generable (..), Generator, fromKey, toKey, values, pickKey)
 
 data Foo
   = Foo1 String !Word
@@ -70,11 +70,11 @@ main = hspec $ do
                      Foo2 [0, 0]
                    ]
 
-    describe "toGenKey genAny . fromGenKey genAny == id" $ do
+    describe "toKey genAny . fromKey genAny == id" $ do
       let equalityTest :: (Generable a, Show a, Eq a) => Generator a -> IO ()
           equalityTest g = do
-            k <- pickGenKey g
-            toGenKey g (fromGenKey g k) `shouldBe` k
+            k <- pickKey g
+            toKey g (fromKey g k) `shouldBe` k
 
       it "()" $ equalityTest (genAny @())
       it "Int8" $ equalityTest (genAny @Int8)
@@ -87,13 +87,13 @@ main = hspec $ do
       it "Integer" $ equalityTest (genAny @Integer)
       it "Foo" $ equalityTest (genAny @Foo)
 
-    describe "fromGenKey genAny . toGenKey genAny == id" $ do
-      let viaGenKey :: Generable a => a -> a
-          viaGenKey = fromGenKey genAny . toGenKey genAny
+    describe "fromKey genAny . toKey genAny == id" $ do
+      let viaKey :: Generable a => a -> a
+          viaKey = fromKey genAny . toKey genAny
 
       describe "check equality" $ do
         let equalityProp :: (Generable a, Show a, Eq a) => a -> Property
-            equalityProp = \(x :: a) -> x === viaGenKey x
+            equalityProp = \(x :: a) -> x === viaKey x
 
         prop "()" $ equalityProp @()
         prop "Int8" $ equalityProp @Int8
@@ -119,10 +119,10 @@ main = hspec $ do
           it "Integer" $ strictCheck spec (id @Integer)
           it "Foo" $ strictCheck spec (id @Foo)
 
-        it "()" $ strictCheck spec (viaGenKey @())
-        it "Int8" $ strictCheck spec (viaGenKey @Int)
-        it "Maybe Int8" $ strictCheck spec (viaGenKey @(Maybe Int))
-        it "Char" $ strictCheck spec (viaGenKey @Char)
-        it "[Char]" $ strictCheck spec (viaGenKey @[Char])
-        it "Integer" $ strictCheck spec (viaGenKey @Integer)
-        it "Foo" $ strictCheck spec (viaGenKey @Foo)
+        it "()" $ strictCheck spec (viaKey @())
+        it "Int8" $ strictCheck spec (viaKey @Int)
+        it "Maybe Int8" $ strictCheck spec (viaKey @(Maybe Int))
+        it "Char" $ strictCheck spec (viaKey @Char)
+        it "[Char]" $ strictCheck spec (viaKey @[Char])
+        it "Integer" $ strictCheck spec (viaKey @Integer)
+        it "Foo" $ strictCheck spec (viaKey @Foo)
