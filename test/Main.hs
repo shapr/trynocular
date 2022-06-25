@@ -11,7 +11,7 @@ import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
 import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
-import Trynocular (Generable (..), enumerateValues, generateFromKey)
+import Trynocular (Generable (..), values, fromGenKey, toGenKey)
 
 data Foo
   = Foo1 String !Word
@@ -49,15 +49,15 @@ instance Consume Foo
 main :: IO ()
 main = hspec $ do
   describe "gen" $ do
-    it "generates unit values" $ enumerateValues genAny `shouldBe` [()]
-    it "generates bool values" $ enumerateValues genAny `shouldBe` [False, True]
+    it "generates unit values" $ values genAny `shouldBe` [()]
+    it "generates bool values" $ values genAny `shouldBe` [False, True]
     it "generates words" $
-      enumerateValues genAny `shouldBe` ([0 .. 255] :: [Word8])
+      values genAny `shouldBe` ([0 .. 255] :: [Word8])
     it "generates lists" $
-      take 5 (enumerateValues genAny)
+      take 5 (values genAny)
         `shouldBe` [[], [()], [(), ()], [(), (), ()], [(), (), (), ()]]
     it "generates ADTs" $
-      take 10 (enumerateValues genAny)
+      take 10 (values genAny)
         `shouldBe` [ Foo1 "" 0,
                      Foo2 [],
                      Foo1 "" 1,
@@ -72,7 +72,7 @@ main = hspec $ do
 
     describe "generateFromKey genAny . toGenKey == id" $ do
       let viaGenKey :: Generable a => a -> a
-          viaGenKey = generateFromKey genAny . toGenKey
+          viaGenKey = fromGenKey genAny . toGenKey genAny
 
       describe "check equality" $ do
         let equalityProp :: (Generable a, Show a, Eq a) => a -> Property

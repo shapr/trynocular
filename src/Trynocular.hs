@@ -3,9 +3,38 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Trynocular where
+module Trynocular
+  ( -- * The 'Generator' type
+    Generator,
+
+    -- * Operations on 'Generator'
+    pickGenKey,
+    genKeys,
+    fromGenKey,
+    toGenKey,
+    pickValue,
+    values,
+
+    -- * Manual construction of 'Generator's
+    genOnly,
+    genMaybe,
+    genEither,
+    genPair,
+    genCases,
+    genRange,
+    genBoundedIntegral,
+    genInteger,
+    genPositive,
+    genNonNegative,
+    invmap,
+
+    -- * 'Generable' type class
+    Generable (..),
+  )
+where
 
 import Data.Char (chr, ord)
+import Data.Functor.Invariant (Invariant (..))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Kind (Type)
 import Data.Universe.Helpers ((+*+), (+++))
@@ -19,25 +48,15 @@ import GHC.Generics
     (:+:) (..),
   )
 import System.Random (randomIO)
-import Data.Functor.Alt (Alt ((<!>)))
 
 data Generator :: Type -> Type where
   Trivial :: Generator ()
   Choice :: Generator a -> Generator b -> Generator (Either a b)
   Both :: Generator a -> Generator b -> Generator (a, b)
-  Apply :: (a -> b) -> Generator a -> Generator b
+  Apply :: (a -> b) -> (b -> a) -> Generator a -> Generator b
 
--- | fmap id should be id, fmap id here will be Apply id ? which is a different
--- term than the input.  If constructors are not exported, the Functor law holds
--- up to observable behavior.
-instance Functor Generator where fmap = Apply
-
-instance Applicative Generator where
-  pure x = Apply (\() -> x) Trivial
-  a <*> b = Apply (uncurry ($)) (Both a b)
-
-instance Alt Generator where
-  a <!> b = Apply (either id id) (Choice a b)
+instance Invariant Generator where
+  invmap = Apply
 
 data GenKey
   = TrivialKey
@@ -46,233 +65,203 @@ data GenKey
   | BothKey GenKey GenKey
   deriving (Eq, Ord, Show)
 
-generateKey :: Generator a -> IO GenKey
-generateKey Trivial = pure TrivialKey
-generateKey (Choice ga gb) =
+pickGenKey :: Generator a -> IO GenKey
+pickGenKey Trivial = pure TrivialKey
+pickGenKey (Choice ga gb) =
   randomIO >>= \case
-    True -> LeftKey <$> generateKey ga
-    False -> RightKey <$> generateKey gb
-generateKey (Both ga gb) = BothKey <$> generateKey ga <*> generateKey gb
-generateKey (Apply _ ga) = generateKey ga
+    True -> LeftKey <$> pickGenKey ga
+    False -> RightKey <$> pickGenKey gb
+pickGenKey (Both ga gb) = BothKey <$> pickGenKey ga <*> pickGenKey gb
+pickGenKey (Apply _ _ ga) = pickGenKey ga
 
-enumerateKeys :: Generator a -> [GenKey]
-enumerateKeys Trivial = [TrivialKey]
-enumerateKeys (Choice ga gb) =
-  (LeftKey <$> enumerateKeys ga) +++ (RightKey <$> enumerateKeys gb)
-enumerateKeys (Both ga gb) =
-  uncurry BothKey <$> enumerateKeys ga +*+ enumerateKeys gb
-enumerateKeys (Apply _ g) = enumerateKeys g
+genKeys :: Generator a -> [GenKey]
+genKeys Trivial = [TrivialKey]
+genKeys (Choice ga gb) =
+  (LeftKey <$> genKeys ga) +++ (RightKey <$> genKeys gb)
+genKeys (Both ga gb) =
+  uncurry BothKey <$> genKeys ga +*+ genKeys gb
+genKeys (Apply _ _ g) = genKeys g
 
-generateFromKey :: Generator a -> GenKey -> a
-generateFromKey Trivial TrivialKey = ()
-generateFromKey (Choice ga _) (LeftKey k) = Left (generateFromKey ga k)
-generateFromKey (Choice _ gb) (RightKey k) = Right (generateFromKey gb k)
-generateFromKey (Both ga gb) (BothKey k1 k2) =
-  (generateFromKey ga k1, generateFromKey gb k2)
-generateFromKey (Apply f ga) k = f (generateFromKey ga k)
-generateFromKey _ _ = error "key doesn't match generator"
+fromGenKey :: Generator a -> GenKey -> a
+fromGenKey Trivial TrivialKey = ()
+fromGenKey (Choice ga _) (LeftKey k) = Left (fromGenKey ga k)
+fromGenKey (Choice _ gb) (RightKey k) = Right (fromGenKey gb k)
+fromGenKey (Both ga gb) (BothKey k1 k2) =
+  (fromGenKey ga k1, fromGenKey gb k2)
+fromGenKey (Apply f _ ga) k = f (fromGenKey ga k)
+fromGenKey _ _ = error "key doesn't match generator"
 
-generateValue :: Generator a -> IO a
-generateValue g = generateFromKey g <$> generateKey g
+toGenKey :: Generator a -> a -> GenKey
+toGenKey Trivial () = TrivialKey
+toGenKey (Choice ga _) (Left a) = LeftKey (toGenKey ga a)
+toGenKey (Choice _ gb) (Right b) = RightKey (toGenKey gb b)
+toGenKey (Both ga gb) (a, b) = BothKey (toGenKey ga a) (toGenKey gb b)
+toGenKey (Apply _ f g) x = toGenKey g (f x)
 
-enumerateValues :: Generator a -> [a]
-enumerateValues g = generateFromKey g <$> enumerateKeys g
+pickValue :: Generator a -> IO a
+pickValue g = fromGenKey g <$> pickGenKey g
+
+values :: Generator a -> [a]
+values g = fromGenKey g <$> genKeys g
+
+genOnly :: a -> Generator a
+genOnly x = invmap (const x) (const ()) Trivial
+
+genMaybe :: Generator a -> Generator (Maybe a)
+genMaybe g =
+  invmap
+    (either (const Nothing) Just)
+    (maybe (Left ()) Right)
+    (Choice Trivial g)
+
+genEither :: Generator a -> Generator b -> Generator (Either a b)
+genEither = Choice
+
+genPair :: Generator a -> Generator b -> Generator (a, b)
+genPair = Both
+
+genCases :: [(a -> Bool, Generator a)] -> Generator a -> Generator a
+genCases [] g = g
+genCases ((p, g) : gs) fallthrough =
+  invmap
+    (either id id)
+    (\x -> if p x then Left x else Right x)
+    (Choice g (genCases gs fallthrough))
 
 genRange :: Integral t => (Integer, Integer) -> Generator t
-genRange (lo, hi) = fromInteger . (+ lo) <$> go (hi - lo + 1)
+genRange (lo, hi) =
+  invmap fromInteger toInteger
+    . invmap (+ lo) (subtract lo)
+    $ go (hi - lo + 1)
   where
-    go 1 = pure 0
     go n
-      | even n = (\x b -> 2 * x + b) <$> go (n `div` 2) <*> (pure 0 <!> pure 1)
-      | otherwise = pure 0 <!> (succ <$> go (n - 1))
-
-toGenKeyRange :: Integral t => (Integer, Integer) -> t -> GenKey
-toGenKeyRange (lo, hi) = go (hi - lo + 1) . subtract lo . toInteger
-  where
-    go 1 _ = TrivialKey
-    go n x
+      | n == 1 = genOnly 0
       | even n =
-          BothKey
-            (go (n `div` 2) (x `div` 2))
-            (if even x then LeftKey TrivialKey else RightKey TrivialKey)
-      | x == 0 = LeftKey TrivialKey
-      | otherwise = RightKey (go (n - 1) (x - 1))
+          invmap
+            (\(x, b) -> 2 * x + b)
+            (`divMod` 2)
+            (Both (go (n `div` 2)) (go 2))
+      | otherwise =
+          genCases
+            [((== 0), genOnly 0)]
+            (invmap (+ 1) (subtract 1) (go (n - 1)))
 
-genBounded :: forall t. (Bounded t, Integral t) => Generator t
-genBounded =
+genBoundedIntegral :: forall t. (Bounded t, Integral t) => Generator t
+genBoundedIntegral =
   genRange
-    ( fromIntegral (minBound :: t),
-      fromIntegral (maxBound :: t)
-    )
-
-toGenKeyBounded :: forall t. (Bounded t, Integral t) => t -> GenKey
-toGenKeyBounded =
-  toGenKeyRange
     ( fromIntegral (minBound :: t),
       fromIntegral (maxBound :: t)
     )
 
 genPositive :: Generator Integer
 genPositive =
-  pure 1
-    <!> (* 2) <$> genPositive
-    <!> (\n -> 2 * n + 1) <$> genPositive
+  genCases
+    [((== 1), genOnly 1), (even, invmap (* 2) (`div` 2) genPositive)]
+    (invmap (succ . (* 2)) (`div` 2) genPositive)
 
-toGenKeyPositive :: Integer -> GenKey
-toGenKeyPositive x
-  | x == 1 = LeftKey (LeftKey TrivialKey)
-  | even x = LeftKey (RightKey (toGenKeyPositive (x `div` 2)))
-  | otherwise = RightKey (toGenKeyPositive ((x - 1) `div` 2))
+genNonNegative :: Generator Integer
+genNonNegative = genCases [((== 0), genOnly 0)] genPositive
+
+genInteger :: Generator Integer
+genInteger =
+  genCases
+    [((== 0), genOnly 0), ((> 0), genPositive)]
+    (invmap negate negate genPositive)
 
 class Generable a where
   genAny :: Generator a
   default genAny :: (Generic a, GenericGenerable (Rep a)) => Generator a
   genAny = genGeneric
 
-  toGenKey :: a -> GenKey
-  default toGenKey :: (Generic a, GenericGenerable (Rep a)) => a -> GenKey
-  toGenKey = toGenKeyGeneric
+instance Generable ()
 
-instance Generable () where
-  genAny = pure ()
-  toGenKey () = TrivialKey
-
-instance Generable Bool where
-  genAny = pure False <!> pure True
-  toGenKey False = LeftKey TrivialKey
-  toGenKey True = RightKey TrivialKey
+instance Generable Bool
 
 instance Generable Char where
-  genAny = chr <$> genRange (0, 0x10FFFF)
-  toGenKey = toGenKeyRange (0, 0x10FFFF) . ord
+  genAny = invmap chr ord (genRange (0, 0x10FFFF))
 
 instance Generable Word8 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Word16 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Word32 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Word64 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Word where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Int8 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Int16 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Int32 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Int64 where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Int where
-  genAny = genBounded
-  toGenKey = toGenKeyBounded
+  genAny = genBoundedIntegral
 
 instance Generable Integer where
-  genAny = pure 0 <!> genPositive <!> negate <$> genPositive
-  toGenKey x
-    | x == 0 = LeftKey (LeftKey TrivialKey)
-    | x > 0 = LeftKey (RightKey (toGenKeyPositive x))
-    | otherwise = RightKey (toGenKeyPositive (-x))
+  genAny = genInteger
 
-instance Generable a => Generable (Maybe a) where
-  genAny = pure Nothing <!> Just <$> genAny
-  toGenKey Nothing = LeftKey TrivialKey
-  toGenKey (Just x) = RightKey (toGenKey x)
+instance Generable a => Generable (Maybe a)
 
-instance (Generable a, Generable b) => Generable (Either a b) where
-  genAny = Left <$> genAny <!> Right <$> genAny
-  toGenKey (Left x) = LeftKey (toGenKey x)
-  toGenKey (Right x) = RightKey (toGenKey x)
+instance (Generable a, Generable b) => Generable (Either a b)
 
-instance (Generable a, Generable b) => Generable (a, b) where
-  genAny = (,) <$> genAny <*> genAny
-  toGenKey (a, b) = BothKey (toGenKey a) (toGenKey b)
+instance (Generable a, Generable b) => Generable (a, b)
 
-instance (Generable a, Generable b, Generable c) => Generable (a, b, c) where
-  genAny = (,,) <$> genAny <*> genAny <*> genAny
-  toGenKey (a, b, c) = BothKey (BothKey (toGenKey a) (toGenKey b)) (toGenKey c)
+instance (Generable a, Generable b, Generable c) => Generable (a, b, c)
 
 instance
   (Generable a, Generable b, Generable c, Generable d) =>
   Generable (a, b, c, d)
-  where
-  genAny = (,,,) <$> genAny <*> genAny <*> genAny <*> genAny
-  toGenKey (a, b, c, d) =
-    BothKey
-      (BothKey (BothKey (toGenKey a) (toGenKey b)) (toGenKey c))
-      (toGenKey d)
 
 instance
   (Generable a, Generable b, Generable c, Generable d, Generable e) =>
   Generable (a, b, c, d, e)
-  where
-  genAny = (,,,,) <$> genAny <*> genAny <*> genAny <*> genAny <*> genAny
-  toGenKey (a, b, c, d, e) =
-    BothKey
-      ( BothKey
-          (BothKey (BothKey (toGenKey a) (toGenKey b)) (toGenKey c))
-          (toGenKey d)
-      )
-      (toGenKey e)
 
-instance Generable a => Generable [a] where
-  genAny = pure [] <!> ((:) <$> genAny <*> genAny)
-  toGenKey [] = LeftKey TrivialKey
-  toGenKey (x : xs) = RightKey (BothKey (toGenKey x) (toGenKey xs))
+instance Generable a => Generable [a]
 
 class GenericGenerable f where
   genGenericRep :: Generator (f p)
-  toGenKeyGenericRep :: f p -> GenKey
 
 instance GenericGenerable U1 where
-  genGenericRep = pure U1
-  toGenKeyGenericRep _ = TrivialKey
+  genGenericRep = invmap (\() -> U1) (\U1 -> ()) Trivial
 
 instance
   (GenericGenerable f, GenericGenerable g) =>
   GenericGenerable (f :+: g)
   where
-  genGenericRep = L1 <$> genGenericRep <!> R1 <$> genGenericRep
-  toGenKeyGenericRep (L1 x) = LeftKey (toGenKeyGenericRep x)
-  toGenKeyGenericRep (R1 y) = RightKey (toGenKeyGenericRep y)
+  genGenericRep =
+    invmap
+      (either L1 R1)
+      (\y -> case y of L1 l -> Left l; R1 r -> Right r)
+      (Choice genGenericRep genGenericRep)
 
 instance
   (GenericGenerable f, GenericGenerable g) =>
   GenericGenerable (f :*: g)
   where
-  genGenericRep = (:*:) <$> genGenericRep <*> genGenericRep
-  toGenKeyGenericRep (x :*: y) =
-    BothKey (toGenKeyGenericRep x) (toGenKeyGenericRep y)
+  genGenericRep =
+    invmap
+      (uncurry (:*:))
+      (\(x :*: y) -> (x, y))
+      (Both genGenericRep genGenericRep)
 
 instance Generable a => GenericGenerable (K1 i a) where
-  genGenericRep = K1 <$> genAny
-  toGenKeyGenericRep (K1 x) = toGenKey x
+  genGenericRep = invmap K1 (\(K1 x) -> x) genAny
 
 instance GenericGenerable f => GenericGenerable (M1 i t f) where
-  genGenericRep = M1 <$> genGenericRep
-  toGenKeyGenericRep (M1 x) = toGenKeyGenericRep x
+  genGenericRep = invmap M1 (\(M1 x) -> x) genGenericRep
 
 genGeneric :: (Generic a, GenericGenerable (Rep a)) => Generator a
-genGeneric = to <$> genGenericRep
-
-toGenKeyGeneric :: (Generic a, GenericGenerable (Rep a)) => a -> GenKey
-toGenKeyGeneric = toGenKeyGenericRep . from
+genGeneric = invmap to from genGenericRep

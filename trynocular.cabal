@@ -26,8 +26,8 @@ extra-source-files:
 library
     exposed-modules:  Trynocular
     build-depends:    base
+                    , invariant
                     , random
-                    , semigroupoids
                     , universe-base
     hs-source-dirs:   src
     default-language: GHC2021
