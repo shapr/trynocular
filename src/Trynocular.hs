@@ -66,7 +66,7 @@ data Generator :: Type -> Type where
 instance Invariant Generator where
   invmap = Apply
 
--- | A key (intuitively, a record of paths taken in a decision tree) that
+-- | A 'Key' (intuitively, a record of paths taken in a decision tree) that
 -- uniquely identifies a value produced by a Generator.
 data Key
   = TrivialKey

@@ -12,6 +12,7 @@ import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
 import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
 import Trynocular (Generable (..), Generator, fromKey, toKey, values, pickKey)
+import Control.Monad (replicateM_)
 
 data Foo
   = Foo1 String !Word
@@ -76,16 +77,16 @@ main = hspec $ do
             k <- pickKey g
             toKey g (fromKey g k) `shouldBe` k
 
-      it "()" $ equalityTest (genAny @())
-      it "Int8" $ equalityTest (genAny @Int8)
-      it "Word8" $ equalityTest (genAny @Word8)
-      it "Int16" $ equalityTest (genAny @Int16)
-      it "Word16" $ equalityTest (genAny @Word16)
-      it "Maybe Int8" $ equalityTest (genAny @(Maybe Int8))
-      it "Char" $ equalityTest (genAny @Char)
-      it "[Char]" $ equalityTest (genAny @[Char])
-      it "Integer" $ equalityTest (genAny @Integer)
-      it "Foo" $ equalityTest (genAny @Foo)
+      it "()" $ replicateM_ 1000 $ equalityTest (genAny @())
+      it "Int8" $ replicateM_ 1000 $ equalityTest (genAny @Int8)
+      it "Word8" $ replicateM_ 1000 $ equalityTest (genAny @Word8)
+      it "Int16" $ replicateM_ 1000 $ equalityTest (genAny @Int16)
+      it "Word16" $ replicateM_ 1000 $ equalityTest (genAny @Word16)
+      it "Maybe Int8" $ replicateM_ 1000 $ equalityTest (genAny @(Maybe Int8))
+      it "Char" $ replicateM_ 1000 $ equalityTest (genAny @Char)
+      it "[Char]" $ replicateM_ 1000 $ equalityTest (genAny @[Char])
+      it "Integer" $ replicateM_ 1000 $ equalityTest (genAny @Integer)
+      it "Foo" $ replicateM_ 1000 $ equalityTest (genAny @Foo)
 
     describe "fromKey genAny . toKey genAny == id" $ do
       let viaKey :: Generable a => a -> a
