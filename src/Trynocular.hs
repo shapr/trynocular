@@ -4,8 +4,9 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module Trynocular
-  ( -- * The 'Generator' type
+  ( -- * The 'Generator' and 'GenKey' types
     Generator,
+    GenKey (..),
 
     -- * Operations on 'Generator'
     pickGenKey,
@@ -49,6 +50,7 @@ import GHC.Generics
     (:+:) (..),
   )
 import System.Random (randomIO)
+import System.IO.Unsafe (unsafeInterleaveIO)
 
 data Generator :: Type -> Type where
   Trivial :: Generator ()
@@ -67,13 +69,16 @@ data GenKey
   deriving (Eq, Ord, Show)
 
 pickGenKey :: Generator a -> IO GenKey
-pickGenKey Trivial = pure TrivialKey
-pickGenKey (Choice ga gb) =
-  randomIO >>= \case
-    True -> LeftKey <$> pickGenKey ga
-    False -> RightKey <$> pickGenKey gb
-pickGenKey (Both ga gb) = BothKey <$> pickGenKey ga <*> pickGenKey gb
-pickGenKey (Apply _ _ ga) = pickGenKey ga
+pickGenKey = unsafeInterleaveIO . go
+  where
+    go :: Generator a -> IO GenKey
+    go Trivial = pure TrivialKey
+    go (Choice ga gb) =
+      randomIO >>= \case
+        True -> LeftKey <$> pickGenKey ga
+        False -> RightKey <$> pickGenKey gb
+    go (Both ga gb) = BothKey <$> pickGenKey ga <*> pickGenKey gb
+    go (Apply _ _ ga) = go ga
 
 genKeys :: Generator a -> [GenKey]
 genKeys Trivial = [TrivialKey]
