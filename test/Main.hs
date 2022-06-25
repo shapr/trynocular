@@ -11,7 +11,7 @@ import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
 import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
-import Trynocular (Generable (..), values, fromGenKey, toGenKey)
+import Trynocular (Generable (..), Generator, fromGenKey, toGenKey, values, pickGenKey)
 
 data Foo
   = Foo1 String !Word
@@ -70,7 +70,24 @@ main = hspec $ do
                      Foo2 [0, 0]
                    ]
 
-    describe "generateFromKey genAny . toGenKey == id" $ do
+    describe "toGenKey genAny . fromGenKey genAny == id" $ do
+      let equalityTest :: (Generable a, Show a, Eq a) => Generator a -> IO ()
+          equalityTest g = do
+            k <- pickGenKey g
+            toGenKey g (fromGenKey g k) `shouldBe` k
+
+      it "()" $ equalityTest (genAny @())
+      it "Int8" $ equalityTest (genAny @Int8)
+      it "Word8" $ equalityTest (genAny @Word8)
+      it "Int16" $ equalityTest (genAny @Int16)
+      it "Word16" $ equalityTest (genAny @Word16)
+      it "Maybe Int8" $ equalityTest (genAny @(Maybe Int8))
+      it "Char" $ equalityTest (genAny @Char)
+      it "[Char]" $ equalityTest (genAny @[Char])
+      it "Integer" $ equalityTest (genAny @Integer)
+      it "Foo" $ equalityTest (genAny @Foo)
+
+    describe "fromGenKey genAny . toGenKey genAny == id" $ do
       let viaGenKey :: Generable a => a -> a
           viaGenKey = fromGenKey genAny . toGenKey genAny
 
