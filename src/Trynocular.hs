@@ -20,6 +20,7 @@ module Trynocular
     genMaybe,
     genEither,
     genPair,
+    genOneOf,
     genCases,
     genRange,
     genBoundedIntegral,
@@ -128,6 +129,10 @@ genCases ((p, g) : gs) fallthrough =
     (\x -> if p x then Left x else Right x)
     (Choice g (genCases gs fallthrough))
 
+genOneOf :: Eq a => [a] -> Generator a
+genOneOf [] = error "empty list of choices"
+genOneOf xs = genCases [((== x), genOnly x) | x <- init xs] (genOnly (last xs))
+
 genRange :: Integral t => (Integer, Integer) -> Generator t
 genRange (lo, hi) =
   invmap fromInteger toInteger
@@ -136,6 +141,7 @@ genRange (lo, hi) =
   where
     go n
       | n == 1 = genOnly 0
+      | n == 2 = genOneOf [0, 1]
       | even n =
           invmap
             (\(x, b) -> 2 * x + b)
