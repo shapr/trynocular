@@ -313,6 +313,7 @@ genInteger =
     [((== 0), genOnly 0), ((> 0), genPositive)]
     (transform negate negate genPositive)
 
+-- | A 'Generator' that produces an arbitrary 'Float'.
 genFloat :: Generator Float
 genFloat
   | isIEEE (undefined :: Float) &&
@@ -322,6 +323,7 @@ genFloat
     transform unsafeCoerce unsafeCoerce (genBoundedIntegral @Word32)
   | otherwise = error "Float is not IEEE single-precision on this platform!"
 
+-- | A 'Generator' that produces an arbitrary 'Double'.
 genDouble :: Generator Double
 genDouble
   | isIEEE (undefined :: Double) &&
