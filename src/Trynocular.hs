@@ -22,6 +22,10 @@ module Trynocular
     genMaybe,
     genEither,
     genPair,
+    gen3Tuple,
+    gen4Tuple,
+    gen5Tuple,
+    genList,
     genOneOf,
     genCases,
     genRange,
@@ -29,17 +33,19 @@ module Trynocular
     genInteger,
     genPositive,
     genNonNegative,
-    invmap,
+    transform,
 
     -- * 'Generable' type class
     Generable (..),
+    GenericGenerable (..),
   )
 where
 
+import Control.Arrow ((&&&))
 import Data.Char (chr, ord)
-import Data.Functor.Invariant (Invariant (..))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Kind (Type)
+import Data.Maybe (fromJust, isNothing)
 import Data.Universe.Helpers ((+*+), (+++))
 import Data.Word (Word16, Word32, Word64, Word8)
 import GHC.Generics
@@ -50,8 +56,8 @@ import GHC.Generics
     (:*:) (..),
     (:+:) (..),
   )
-import System.Random (randomIO)
 import System.IO.Unsafe (unsafeInterleaveIO)
+import System.Random (randomIO)
 
 -- | A 'Generator' for a type knows how to enumerate or pick values for the
 -- type, as well as how to represent values of the type as 'Key's.  The
@@ -63,8 +69,20 @@ data Generator :: Type -> Type where
   Both :: Generator a -> Generator b -> Generator (a, b)
   Apply :: (a -> b) -> (b -> a) -> Generator a -> Generator b
 
-instance Invariant Generator where
-  invmap = Apply
+-- | Converts a 'Generator' from one type to another, by applying conversion
+-- functions to the values.
+--
+-- A valid use of @'transform' f1 f2 gen@ requires that, for any value @x@
+-- produced by @gen@:
+--
+-- 1. @f2 (f1 x) = x@.  This equality need not preserve strictness.
+-- 2. @(f1 . f2) (f1 x) = f1 x@, and @f1 . f2@ *must* preserve strictness in
+--    this case.
+--
+-- The conversion functions are automatically made strict on flat domains, so
+-- one need only worry about strictness on nested domains.
+transform :: (a -> b) -> (b -> a) -> Generator a -> Generator b
+transform f1 f2 = Apply (\x -> x `seq` f1 x) (\y -> y `seq` f2 y)
 
 -- | A 'Key' (intuitively, a record of paths taken in a decision tree) that
 -- uniquely identifies a value produced by a Generator.
@@ -155,7 +173,7 @@ values g = fromKey g <$> keys g
 -- on the value will generate the same demand on the key, so the key won't
 -- represent the full lattice of possible demands.
 genOnly :: a -> Generator a
-genOnly x = invmap (\() -> x) (\y -> y `seq` ()) Trivial
+genOnly x = transform (const x) (const ()) Trivial
 
 -- | A 'Generator' that produces an 'Either' value, with the given generators
 -- for the left and right sides.
@@ -167,14 +185,43 @@ genEither = Choice
 genPair :: Generator a -> Generator b -> Generator (a, b)
 genPair = Both
 
--- | A 'Generator' that produces a 'Maybe' value, with the given generator for
--- the value if present.
-genMaybe :: Generator a -> Generator (Maybe a)
-genMaybe g =
-  invmap
-    (either (const Nothing) Just)
-    (maybe (Left ()) Right)
-    (Choice Trivial g)
+-- | A 'Generator' that produces a 3-tuple of values, with the given generators
+-- for the components.
+gen3Tuple :: Generator a -> Generator b -> Generator c -> Generator (a, b, c)
+gen3Tuple ga gb gc =
+  transform
+    (\((a, b), c) -> (a, b, c))
+    (\(a, b, c) -> ((a, b), c))
+    (genPair (genPair ga gb) gc)
+
+-- | A 'Generator' that produces a 4-tuple of values, with the given generators
+-- for the components.
+gen4Tuple ::
+  Generator a ->
+  Generator b ->
+  Generator c ->
+  Generator d ->
+  Generator (a, b, c, d)
+gen4Tuple ga gb gc gd =
+  transform
+    (\(((a, b), c), d) -> (a, b, c, d))
+    (\(a, b, c, d) -> (((a, b), c), d))
+    (genPair (genPair (genPair ga gb) gc) gd)
+
+-- | A 'Generator' that produces a 5-tuple of values, with the given generators
+-- for the components.
+gen5Tuple ::
+  Generator a ->
+  Generator b ->
+  Generator c ->
+  Generator d ->
+  Generator e ->
+  Generator (a, b, c, d, e)
+gen5Tuple ga gb gc gd ge =
+  transform
+    (\(((((a, b), c), d), e)) -> (a, b, c, d, e))
+    (\(a, b, c, d, e) -> (((((a, b), c), d), e)))
+    (genPair (genPair (genPair (genPair ga gb) gc) gd) ge)
 
 -- | A 'Generator' that produces a value by case analysis.  The first argument
 -- is a list of cases, each with a predicate that matches values produced by the
@@ -187,12 +234,25 @@ genMaybe g =
 -- predicate for an earlier case.  The fallthrough 'Generator' should never
 -- produce a value that matches the predicate for any case.
 genCases :: [(a -> Bool, Generator a)] -> Generator a -> Generator a
-genCases [] g = g
+genCases [] fallthrough = fallthrough
 genCases ((p, g) : gs) fallthrough =
-  invmap
+  transform
     (either id id)
     (\x -> if p x then Left x else Right x)
-    (Choice g (genCases gs fallthrough))
+    (genEither g (genCases gs fallthrough))
+
+-- | A 'Generator' that produces a 'Maybe' value, with the given generator for
+-- the value if present.
+genMaybe :: Generator a -> Generator (Maybe a)
+genMaybe g = genCases [(isNothing, genOnly Nothing)] (transform Just fromJust g)
+
+-- | A 'Generator' for lists, whose elements are produced by the given
+-- generator.
+genList :: Generator a -> Generator [a]
+genList g =
+  genCases
+    [(null, genOnly [])]
+    (transform (uncurry (:)) (head &&& tail) (genPair g (genList g)))
 
 -- | A 'Generator' that produces a value from the given list.  The list should
 -- be non-empty, and should not contain duplicates.
@@ -204,22 +264,22 @@ genOneOf xs = genCases [((== x), genOnly x) | x <- init xs] (genOnly (last xs))
 -- inclusive range.
 genRange :: Integral t => (Integer, Integer) -> Generator t
 genRange (lo, hi) =
-  invmap fromInteger toInteger
-    . invmap (+ lo) (subtract lo)
+  transform fromInteger toInteger
+    . transform (+ lo) (subtract lo)
     $ go (hi - lo + 1)
   where
     go n
       | n == 1 = genOnly 0
       | n == 2 = genOneOf [0, 1]
       | even n =
-          invmap
+          transform
             (\(x, b) -> 2 * x + b)
             (`divMod` 2)
             (Both (go (n `div` 2)) (go 2))
       | otherwise =
           genCases
             [((== 0), genOnly 0)]
-            (invmap (+ 1) (subtract 1) (go (n - 1)))
+            (transform (+ 1) (subtract 1) (go (n - 1)))
 
 -- | A 'Generator' that produces a value of an 'Integral' type from its full
 -- range.
@@ -234,8 +294,8 @@ genBoundedIntegral =
 genPositive :: Generator Integer
 genPositive =
   genCases
-    [((== 1), genOnly 1), (even, invmap (* 2) (`div` 2) genPositive)]
-    (invmap (succ . (* 2)) (`div` 2) genPositive)
+    [((== 1), genOnly 1), (even, transform (* 2) (`div` 2) genPositive)]
+    (transform (succ . (* 2)) (`div` 2) genPositive)
 
 -- | A 'Generator' that produces a non-negative 'Integer'.
 genNonNegative :: Generator Integer
@@ -246,7 +306,7 @@ genInteger :: Generator Integer
 genInteger =
   genCases
     [((== 0), genOnly 0), ((> 0), genPositive)]
-    (invmap negate negate genPositive)
+    (transform negate negate genPositive)
 
 -- | A type class for types that can be generated by a 'Generator'.  For types
 -- that are an instance of this class, 'genAny' can be used as a generator for
@@ -261,7 +321,7 @@ instance Generable ()
 instance Generable Bool
 
 instance Generable Char where
-  genAny = invmap chr ord (genRange (0, 0x10FFFF))
+  genAny = transform chr ord (genRange (0, 0x10FFFF))
 
 instance Generable Word8 where
   genAny = genBoundedIntegral
@@ -314,6 +374,8 @@ instance
 
 instance Generable a => Generable [a]
 
+-- | A type class for GHC Generics constructors that can be used to generate a
+-- Generable instance for a type.
 class GenericGenerable f where
   genGenericRep :: Generator (f p)
 
@@ -325,7 +387,7 @@ instance
   GenericGenerable (f :+: g)
   where
   genGenericRep =
-    invmap
+    transform
       (either L1 R1)
       (\y -> case y of L1 l -> Left l; R1 r -> Right r)
       (Choice genGenericRep genGenericRep)
@@ -335,16 +397,16 @@ instance
   GenericGenerable (f :*: g)
   where
   genGenericRep =
-    invmap
+    transform
       (uncurry (:*:))
       (\(x :*: y) -> (x, y))
       (Both genGenericRep genGenericRep)
 
 instance Generable a => GenericGenerable (K1 i a) where
-  genGenericRep = invmap K1 (\(K1 x) -> x) genAny
+  genGenericRep = transform K1 (\(K1 x) -> x) genAny
 
 instance GenericGenerable f => GenericGenerable (M1 i t f) where
-  genGenericRep = invmap M1 (\(M1 x) -> x) genGenericRep
+  genGenericRep = transform M1 (\(M1 x) -> x) genGenericRep
 
 genGeneric :: (Generic a, GenericGenerable (Rep a)) => Generator a
-genGeneric = invmap to from genGenericRep
+genGeneric = transform to from genGenericRep
