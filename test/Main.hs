@@ -86,6 +86,8 @@ main = hspec $ do
       it "Char" $ replicateM_ 1000 $ equalityTest (genAny @Char)
       it "[Char]" $ replicateM_ 1000 $ equalityTest (genAny @[Char])
       it "Integer" $ replicateM_ 1000 $ equalityTest (genAny @Integer)
+      it "Float" $ replicateM_ 1000 $ equalityTest (genAny @Float)
+      it "Double" $ replicateM_ 1000 $ equalityTest (genAny @Double)
       it "Foo" $ replicateM_ 1000 $ equalityTest (genAny @Foo)
 
     describe "fromKey genAny . toKey genAny == id" $ do
@@ -105,6 +107,8 @@ main = hspec $ do
         prop "Char" $ equalityProp @Char
         prop "[Char]" $ equalityProp @[Char]
         prop "Integer" $ equalityProp @Integer
+        prop "Float" $ equalityProp @Float
+        prop "Double" $ equalityProp @Double
         prop "Foo" $ equalityProp @Foo
 
       describe "check strictness" $ do
@@ -118,6 +122,8 @@ main = hspec $ do
           it "Char" $ strictCheck spec (id @Char)
           it "[Char]" $ strictCheck spec (id @[Char])
           it "Integer" $ strictCheck spec (id @Integer)
+          it "Float" $ strictCheck spec (id @Float)
+          it "Double" $ strictCheck spec (id @Double)
           it "Foo" $ strictCheck spec (id @Foo)
 
         it "()" $ strictCheck spec (viaKey @())
@@ -126,4 +132,6 @@ main = hspec $ do
         it "Char" $ strictCheck spec (viaKey @Char)
         it "[Char]" $ strictCheck spec (viaKey @[Char])
         it "Integer" $ strictCheck spec (viaKey @Integer)
+        it "Float" $ strictCheck spec (viaKey @Float)
+        it "Double" $ strictCheck spec (viaKey @Double)
         it "Foo" $ strictCheck spec (viaKey @Foo)
