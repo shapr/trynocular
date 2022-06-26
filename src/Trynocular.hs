@@ -7,7 +7,11 @@
 module Trynocular
   ( -- * The 'Generator' and 'Key' types
     Generator,
-    Key (..),
+
+    -- * The 'Key'
+    Key,
+    GeneralKey,
+    KeyF (..),
 
     -- * Operations on 'Generator'
     pickKey,
@@ -16,6 +20,15 @@ module Trynocular
     toKey,
     pickValue,
     values,
+    similarity,
+
+    -- Demand and observation
+    ForcedKey,
+    ObservableKey,
+    Observable,
+    makeObservable,
+    observe,
+    spy,
 
     -- * Manual construction of 'Generator's
     genOnly,
@@ -44,7 +57,9 @@ module Trynocular
 where
 
 import Control.Arrow ((&&&))
+import Control.Concurrent (MVar, newMVar, readMVar, swapMVar)
 import Data.Char (chr, ord)
+import Data.Functor.Identity (Identity (..))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Kind (Type)
 import Data.Maybe (fromJust, isNothing)
@@ -61,8 +76,6 @@ import GHC.Generics
 import System.IO.Unsafe (unsafeInterleaveIO)
 import System.Random (randomIO)
 import Unsafe.Coerce (unsafeCoerce)
-import Data.Functor.Identity (Identity(..))
-import Control.Concurrent (MVar, readMVar, swapMVar, newMVar)
 
 -- | A 'Generator' for a type knows how to enumerate or pick values for the
 -- type, as well as how to represent values of the type as 'Key's.  The
@@ -91,12 +104,6 @@ transform f1 f2 = Apply (\x -> x `seq` f1 x) (\y -> y `seq` f2 y)
 
 -- | A 'Key' (intuitively, a record of paths taken in a decision tree) that
 -- uniquely identifies a value produced by a Generator.
-data Key
-  = TrivialKey
-  | LeftKey Key
-  | RightKey Key
-  | BothKey Key Key
-  deriving (Eq, Ord, Show)
 
 -- | Choose a single 'Key' corresponding to a value from a 'Generator'.
 --
@@ -106,12 +113,12 @@ pickKey :: Generator a -> IO Key
 pickKey = unsafeInterleaveIO . go
   where
     go :: Generator a -> IO Key
-    go Trivial = pure TrivialKey
+    go Trivial = pure (Identity TrivialF)
     go (Choice ga gb) =
       randomIO >>= \case
-        True -> LeftKey <$> pickKey ga
-        False -> RightKey <$> pickKey gb
-    go (Both ga gb) = BothKey <$> pickKey ga <*> pickKey gb
+        True -> Identity . LeftF <$> pickKey ga
+        False -> Identity . RightF <$> pickKey gb
+    go (Both ga gb) = Identity <$> (BothF <$> pickKey ga <*> pickKey gb)
     go (Apply _ _ ga) = go ga
 
 -- | List all 'Key's corresponding to values from a 'Generator'.
@@ -119,11 +126,11 @@ pickKey = unsafeInterleaveIO . go
 -- TODO: This currently fails on generators that contain infinite paths in the
 -- left branch of a choice. See issue #1.
 keys :: Generator a -> [Key]
-keys Trivial = [TrivialKey]
+keys Trivial = [Identity TrivialF]
 keys (Choice ga gb) =
-  (LeftKey <$> keys ga) +++ (RightKey <$> keys gb)
+  (Identity . LeftF <$> keys ga) +++ (Identity . RightF <$> keys gb)
 keys (Both ga gb) =
-  uncurry BothKey <$> keys ga +*+ keys gb
+  Identity <$> (uncurry BothF <$> keys ga +*+ keys gb)
 keys (Apply _ _ g) = keys g
 
 -- | Using a 'Generator', convert a 'Key' to a value.
@@ -136,10 +143,10 @@ keys (Apply _ _ g) = keys g
 -- should have @'fromKey' g . 'toKey' g == 'id'@ on any value produced by
 -- the generator @g@, not just in equality but in strictness as well.
 fromKey :: Generator a -> Key -> a
-fromKey Trivial TrivialKey = ()
-fromKey (Choice ga _) (LeftKey k) = Left (fromKey ga k)
-fromKey (Choice _ gb) (RightKey k) = Right (fromKey gb k)
-fromKey (Both ga gb) (BothKey k1 k2) =
+fromKey Trivial (Identity TrivialF) = ()
+fromKey (Choice ga _) (Identity (LeftF k)) = Left (fromKey ga k)
+fromKey (Choice _ gb) (Identity (RightF k)) = Right (fromKey gb k)
+fromKey (Both ga gb) (Identity (BothF k1 k2)) =
   (fromKey ga k1, fromKey gb k2)
 fromKey (Apply f _ ga) k = f (fromKey ga k)
 fromKey _ _ = error "key doesn't match generator"
@@ -151,10 +158,10 @@ fromKey _ _ = error "key doesn't match generator"
 -- should have @'fromKey' g . 'toKey' g == 'id'@ on any value produced by
 -- the generator @g@, not just in equality but in strictness as well.
 toKey :: Generator a -> a -> Key
-toKey Trivial () = TrivialKey
-toKey (Choice ga _) (Left a) = LeftKey (toKey ga a)
-toKey (Choice _ gb) (Right b) = RightKey (toKey gb b)
-toKey (Both ga gb) (a, b) = BothKey (toKey ga a) (toKey gb b)
+toKey Trivial () = Identity TrivialF
+toKey (Choice ga _) (Left a) = Identity (LeftF (toKey ga a))
+toKey (Choice _ gb) (Right b) = Identity (RightF (toKey gb b))
+toKey (Both ga gb) (a, b) = Identity (BothF (toKey ga a) (toKey gb b))
 toKey (Apply _ f g) x = toKey g (f x)
 
 -- | Pick a value from a 'Generator'.
@@ -170,6 +177,16 @@ pickValue g = fromKey g <$> pickKey g
 -- left branch of a choice. See issue #1.
 values :: Generator a -> [a]
 values g = fromKey g <$> keys g
+
+similarity :: Generator a -> a -> a -> Rational
+similarity g x y = go (toKey g x) (toKey g y)
+  where
+    go :: Key -> Key -> Rational
+    go (Identity TrivialF) (Identity TrivialF) = 1
+    go (Identity (LeftF k1)) (Identity (LeftF k2)) = 0.5 + 0.5 * go k1 k2
+    go (Identity (RightF k1)) (Identity (RightF k2)) = 0.5 + 0.5 * go k1 k2
+    go (Identity (BothF k1 k2)) (Identity (BothF k3 k4)) = (go k1 k3 + go k2 k4) / 2
+    go _ _ = 0
 
 -- To test:
 
@@ -190,65 +207,50 @@ values g = fromKey g <$> keys g
 
 data KeyF f = TrivialF | LeftF (GeneralKey f) | RightF (GeneralKey f) | BothF (GeneralKey f) (GeneralKey f)
 
+instance Show (KeyF Identity) where
+  show TrivialF = "Trivial"
+  show (LeftF k) = "Left " ++ show (runIdentity k)
+  show (RightF k) = "Right " ++ show (runIdentity k)
+  show (BothF k1 k2) =
+    "Both " ++ show (runIdentity k1) ++ " " ++ show (runIdentity k2)
+
+instance Eq (KeyF Identity) where
+  TrivialF == TrivialF = True
+  LeftF a == LeftF b = a == b
+  RightF a == RightF b = a == b
+  BothF a b == BothF c d = a == c && b == d
+  _ == _ = False
+
 type GeneralKey f = f (KeyF f)
 
-type KKey = GeneralKey Identity
+type Key = GeneralKey Identity
+
 type ForcedKey = GeneralKey Maybe
+
 type ObservableKey = GeneralKey Observable
 
 data Observable a = Observable (MVar Bool) a
 
 onSubkeys :: Monad m => (GeneralKey f1 -> m (GeneralKey f2)) -> KeyF f1 -> m (KeyF f2)
-onSubkeys op TrivialF = return TrivialF
+onSubkeys _ TrivialF = return TrivialF
 onSubkeys op (LeftF k) = LeftF <$> op k
 onSubkeys op (RightF k) = RightF <$> op k
 onSubkeys op (BothF k1 k2) = BothF <$> op k1 <*> op k2
 
----------------------------------
-makeObservable :: KKey -> IO ObservableKey
+makeObservable :: Key -> IO ObservableKey
 makeObservable (Identity k) = do
   var <- newMVar False
-  Observable var <$> makeObservableSubkeys k
+  Observable var <$> onSubkeys makeObservable k
 
-makeObservableSubkeys :: KeyF Identity -> IO (KeyF Observable)
-makeObservableSubkeys TrivialF = return TrivialF
-makeObservableSubkeys (LeftF k) = LeftF <$> makeObservable k
-makeObservableSubkeys (RightF k) = RightF <$> makeObservable k
-makeObservableSubkeys (BothF k1 k2) = BothF <$> makeObservable k1 <*> makeObservable k2
-
----------------------------------
 observe :: ObservableKey -> IO ForcedKey
 observe (Observable var k) = do
-      forced <- readMVar var
-      if forced then Just <$> observeSubkeys k else return Nothing
+  forced <- readMVar var
+  if forced then Just <$> onSubkeys observe k else return Nothing
 
-observeSubkeys :: KeyF Observable -> IO (KeyF Maybe)
-observeSubkeys TrivialF = return TrivialF
-observeSubkeys (LeftF k) = LeftF <$> observe k
-observeSubkeys (RightF k) = RightF <$> observe k
-observeSubkeys (BothF k1 k2) = BothF <$> observe k1 <*> observe k2
-
----------------------------------
-spy :: ObservableKey -> IO KKey
+spy :: ObservableKey -> IO Key
 spy (Observable var k) = unsafeInterleaveIO $ do
   _ <- swapMVar var True
-  Identity <$> spySubkeys k
-
-spySubkeys :: KeyF Observable -> IO (KeyF Identity)
-spySubkeys TrivialF = return TrivialF
-spySubkeys (LeftF k) = LeftF <$> spy k
-spySubkeys (RightF k) = RightF <$> spy k
-spySubkeys (BothF k1 k2) = BothF <$> spy k1 <*> spy k2
-
-similarity :: Generator a -> a -> a -> Rational
-similarity g x y = go (toKey g x) (toKey g y)
-  where
-    go :: Key -> Key -> Rational
-    go TrivialKey TrivialKey = 1
-    go (LeftKey k1) (LeftKey k2) = 0.5 + 0.5 * go k1 k2
-    go (RightKey k1) (RightKey k2) = 0.5 + 0.5 * go k1 k2
-    go (BothKey k1 k2) (BothKey k3 k4) = (go k1 k3 + go k2 k4) / 2
-    go _ _ = 0
+  Identity <$> onSubkeys spy k
 
 -- | A 'Generator' that always generates the same value.
 --
