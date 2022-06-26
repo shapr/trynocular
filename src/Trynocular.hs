@@ -61,6 +61,8 @@ import GHC.Generics
 import System.IO.Unsafe (unsafeInterleaveIO)
 import System.Random (randomIO)
 import Unsafe.Coerce (unsafeCoerce)
+import Data.Functor.Identity (Identity(..))
+import Control.Concurrent (MVar, readMVar, swapMVar, newMVar)
 
 -- | A 'Generator' for a type knows how to enumerate or pick values for the
 -- type, as well as how to represent values of the type as 'Key's.  The
@@ -168,6 +170,85 @@ pickValue g = fromKey g <$> pickKey g
 -- left branch of a choice. See issue #1.
 values :: Generator a -> [a]
 values g = fromKey g <$> keys g
+
+-- To test:
+
+-- Initialize probabilities to 0.5 for each Choice.
+-- Initialize the coverage expectation to some initial value.
+-- LOOP:
+--   Generate a random test case that differs from past test cases in the portion that was forced.
+--   Run the test, and fail if it fails.
+--   Observe how much of the key was forced.
+--   Compare new coverage percent with expectation.
+--     If > expectation, then increase probability of the choices we made that were forced
+--     If < expectation, then decrease probability of the choices we made that were forced
+--   Update coverage expectation based on an exponential moving average.
+--     New coverage expectation = alpha * old coverage expectation + (1 - alpha) * observed new coverage percent
+--   If termination condition then exit.  Else repeat
+
+-- observeDemand :: Key -> (Key -> IO ()) -> IO KeyDemand
+
+data KeyF f = TrivialF | LeftF (GeneralKey f) | RightF (GeneralKey f) | BothF (GeneralKey f) (GeneralKey f)
+
+type GeneralKey f = f (KeyF f)
+
+type KKey = GeneralKey Identity
+type ForcedKey = GeneralKey Maybe
+type ObservableKey = GeneralKey Observable
+
+data Observable a = Observable (MVar Bool) a
+
+onSubkeys :: Monad m => (GeneralKey f1 -> m (GeneralKey f2)) -> KeyF f1 -> m (KeyF f2)
+onSubkeys op TrivialF = return TrivialF
+onSubkeys op (LeftF k) = LeftF <$> op k
+onSubkeys op (RightF k) = RightF <$> op k
+onSubkeys op (BothF k1 k2) = BothF <$> op k1 <*> op k2
+
+---------------------------------
+makeObservable :: KKey -> IO ObservableKey
+makeObservable (Identity k) = do
+  var <- newMVar False
+  Observable var <$> makeObservableSubkeys k
+
+makeObservableSubkeys :: KeyF Identity -> IO (KeyF Observable)
+makeObservableSubkeys TrivialF = return TrivialF
+makeObservableSubkeys (LeftF k) = LeftF <$> makeObservable k
+makeObservableSubkeys (RightF k) = RightF <$> makeObservable k
+makeObservableSubkeys (BothF k1 k2) = BothF <$> makeObservable k1 <*> makeObservable k2
+
+---------------------------------
+observe :: ObservableKey -> IO ForcedKey
+observe (Observable var k) = do
+      forced <- readMVar var
+      if forced then Just <$> observeSubkeys k else return Nothing
+
+observeSubkeys :: KeyF Observable -> IO (KeyF Maybe)
+observeSubkeys TrivialF = return TrivialF
+observeSubkeys (LeftF k) = LeftF <$> observe k
+observeSubkeys (RightF k) = RightF <$> observe k
+observeSubkeys (BothF k1 k2) = BothF <$> observe k1 <*> observe k2
+
+---------------------------------
+spy :: ObservableKey -> IO KKey
+spy (Observable var k) = unsafeInterleaveIO $ do
+  _ <- swapMVar var True
+  Identity <$> spySubkeys k
+
+spySubkeys :: KeyF Observable -> IO (KeyF Identity)
+spySubkeys TrivialF = return TrivialF
+spySubkeys (LeftF k) = LeftF <$> spy k
+spySubkeys (RightF k) = RightF <$> spy k
+spySubkeys (BothF k1 k2) = BothF <$> spy k1 <*> spy k2
+
+similarity :: Generator a -> a -> a -> Rational
+similarity g x y = go (toKey g x) (toKey g y)
+  where
+    go :: Key -> Key -> Rational
+    go TrivialKey TrivialKey = 1
+    go (LeftKey k1) (LeftKey k2) = 0.5 + 0.5 * go k1 k2
+    go (RightKey k1) (RightKey k2) = 0.5 + 0.5 * go k1 k2
+    go (BothKey k1 k2) (BothKey k3 k4) = (go k1 k3 + go k2 k4) / 2
+    go _ _ = 0
 
 -- | A 'Generator' that always generates the same value.
 --
@@ -278,9 +359,9 @@ genRange (lo', hi') =
       | n == 2 = genOneOf [0, 1]
       | even n =
           transform
-            (\(x, b) -> 2 * x + b)
-            (`divMod` 2)
-            (Both (go (n `div` 2)) (go 2))
+            (\(b, x) -> b * (n `div` 2) + x)
+            (\y -> if y >= n `div` 2 then (1, y - n `div` 2) else (0, y))
+            (Both (go 2) (go (n `div` 2)))
       | otherwise =
           genCases
             [((== 0), genOnly 0)]
@@ -316,21 +397,21 @@ genInteger =
 -- | A 'Generator' that produces an arbitrary 'Float'.
 genFloat :: Generator Float
 genFloat
-  | isIEEE (undefined :: Float) &&
-    floatRadix (undefined :: Float) == 2 &&
-    floatDigits (undefined :: Float) == 24 &&
-    floatRange (undefined :: Float) == (-125, 128) =
-    transform unsafeCoerce unsafeCoerce (genBoundedIntegral @Word32)
+  | isIEEE (undefined :: Float)
+      && floatRadix (undefined :: Float) == 2
+      && floatDigits (undefined :: Float) == 24
+      && floatRange (undefined :: Float) == (-125, 128) =
+      transform unsafeCoerce unsafeCoerce (genBoundedIntegral @Word32)
   | otherwise = error "Float is not IEEE single-precision on this platform!"
 
 -- | A 'Generator' that produces an arbitrary 'Double'.
 genDouble :: Generator Double
 genDouble
-  | isIEEE (undefined :: Double) &&
-    floatRadix (undefined :: Double) == 2 &&
-    floatDigits (undefined :: Double) == 53 &&
-    floatRange (undefined :: Double) == (-1021, 1024) =
-    transform unsafeCoerce unsafeCoerce (genBoundedIntegral @Word64)
+  | isIEEE (undefined :: Double)
+      && floatRadix (undefined :: Double) == 2
+      && floatDigits (undefined :: Double) == 53
+      && floatRange (undefined :: Double) == (-1021, 1024) =
+      transform unsafeCoerce unsafeCoerce (genBoundedIntegral @Word64)
   | otherwise = error "Double is not IEEE double-precision on this platform!"
 
 -- | A type class for types that can be generated by a 'Generator'.  For types

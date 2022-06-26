@@ -2,7 +2,9 @@
 
 module Main where
 
+import Control.Monad (replicateM_)
 import Data.Int (Int16, Int8)
+import Data.List (nub, sort)
 import Data.Word (Word16, Word8)
 import GHC.Generics (Generic)
 import Generics.SOP qualified as SOP
@@ -11,8 +13,7 @@ import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
 import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
-import Trynocular (Generable (..), Generator, fromKey, toKey, values, pickKey)
-import Control.Monad (replicateM_)
+import Trynocular (Generable (..), Generator, fromKey, pickKey, toKey, values)
 
 data Foo
   = Foo1 String !Word
@@ -53,23 +54,20 @@ main = hspec $ do
     it "generates unit values" $ values genAny `shouldBe` [()]
     it "generates bool values" $ values genAny `shouldBe` [False, True]
     it "generates words" $
-      values genAny `shouldBe` ([0 .. 255] :: [Word8])
+      sort (values genAny) `shouldBe` ([0 .. 255] :: [Word8])
     it "generates lists" $
       take 5 (values genAny)
         `shouldBe` [[], [()], [(), ()], [(), (), ()], [(), (), (), ()]]
-    it "generates ADTs" $
-      take 10 (values genAny)
-        `shouldBe` [ Foo1 "" 0,
-                     Foo2 [],
-                     Foo1 "" 1,
-                     Foo3 (Foo1 "" 0) (Foo1 "" 0),
-                     Foo1 "\NUL" 0,
-                     Foo2 [0],
-                     Foo1 "" 2,
-                     Foo3 (Foo1 "" 0) (Foo2 []),
-                     Foo1 "\NUL" 1,
-                     Foo2 [0, 0]
-                   ]
+    it "generates ADTs" $ do
+      let isFoo1 x = case x of (Foo1 _ _) -> True; _ -> False
+          isFoo2 x = case x of (Foo2 _) -> True; _ -> False
+          isFoo3 x = case x of (Foo3 _ _) -> True; _ -> False
+          vals = take 100 (values genAny)
+
+      any isFoo1 vals `shouldBe` True
+      any isFoo2 vals `shouldBe` True
+      any isFoo3 vals `shouldBe` True
+      nub vals `shouldBe` vals
 
     describe "toKey genAny . fromKey genAny == id" $ do
       let equalityTest :: (Generable a, Show a, Eq a) => Generator a -> IO ()
