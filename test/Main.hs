@@ -2,6 +2,8 @@
 
 module Main where
 
+import Control.DeepSeq (rnf)
+import Control.Exception (evaluate)
 import Control.Monad (replicateM_)
 import Data.Int (Int16, Int8)
 import Data.List (nub, sort)
@@ -9,13 +11,20 @@ import Data.Word (Word16, Word8)
 import GHC.Generics (Generic)
 import Generics.SOP qualified as SOP
 import StrictUtil (strictCheck)
-import Test.Hspec (describe, hspec, it, shouldBe, shouldReturn)
+import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
 import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
-import Trynocular (Generable (..), Generator, fromKey, pickKey, toKey, values, makeObservable, spy, observe, KeyF (..))
-import Control.Exception (evaluate)
-import Control.DeepSeq (rnf)
+import Trynocular
+  ( Generable (..),
+    Generator,
+    KeyF (..),
+    fromKey,
+    pickKey,
+    spy,
+    toKey,
+    values,
+  )
 
 data Foo
   = Foo1 String !Word
@@ -138,22 +147,16 @@ main = hspec $ do
 
   describe "observable demand" $ do
     it "reports total demand" $ do
-      let key = toKey genAny (Just ())
-      observable <- makeObservable key
-      spiedKey <- spy observable
-      _ <- evaluate (rnf (fromKey genAny spiedKey :: Maybe ()))
-      observe observable `shouldReturn` Just (RightF (Just TrivialF))
+      (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
+        evaluate (rnf (fromKey genAny key :: Maybe ()))
+      partialKey `shouldBe` Just (RightF (Just TrivialF))
 
     it "reports no demand" $ do
-      let key = toKey genAny (Just ())
-      observable <- makeObservable key
-      _spiedKey <- spy observable
-      -- Do nothing
-      observe observable `shouldReturn` Nothing
+      (partialKey, _) <- spy (toKey genAny (Just ())) $ \_key -> do
+        return ()
+      partialKey `shouldBe` Nothing
 
     it "reports partial demand" $ do
-      let key = toKey genAny (Just ())
-      observable <- makeObservable key
-      spiedKey <- spy observable
-      _ <- evaluate (fromKey genAny spiedKey :: Maybe ())
-      observe observable `shouldReturn` Just (RightF Nothing)
+      (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
+        evaluate (fromKey genAny key :: Maybe ())
+      partialKey `shouldBe` Just (RightF Nothing)

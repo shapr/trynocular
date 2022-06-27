@@ -5,11 +5,12 @@
 
 -- | TODO: Module documentation
 module Trynocular
-  ( -- * The 'Generator' and 'Key' types
+  ( -- * The 'Generator' type
     Generator,
 
     -- * The 'Key'
     Key,
+    PartialKey,
     GeneralKey,
     KeyF (..),
 
@@ -25,11 +26,7 @@ module Trynocular
     valueSimilarity,
 
     -- * Demand and observation
-    ForcedKey,
-    ObservableKey,
-    Observable,
-    makeObservable,
-    observe,
+    fromPartialKey,
     spy,
 
     -- * Manual construction of 'Generator's
@@ -105,9 +102,6 @@ data Generator :: Type -> Type where
 transform :: (a -> b) -> (b -> a) -> Generator a -> Generator b
 transform f1 f2 = Apply (\x -> x `seq` f1 x) (\y -> y `seq` f2 y)
 
--- | A 'Key' (intuitively, a record of paths taken in a decision tree) that
--- uniquely identifies a value produced by a Generator.
-
 -- | Choose a single 'Key' corresponding to a value from a 'Generator'.
 --
 -- This uses lazy IO to generate the random path, so it is cheap if you don't
@@ -153,6 +147,20 @@ fromKey (Both ga gb) (Identity (BothF k1 k2)) =
   (fromKey ga k1, fromKey gb k2)
 fromKey (Apply f _ ga) k = f (fromKey ga k)
 fromKey _ _ = error "key doesn't match generator"
+
+-- | Using a 'Generator', convert a 'PartialKey' to a value.
+--
+-- This is just like 'fromKey', except that it can produce values containing
+-- 'undefined' when the key isn't specified.
+fromPartialKey :: Generator a -> PartialKey -> a
+fromPartialKey _ Nothing = undefined
+fromPartialKey Trivial (Just TrivialF) = ()
+fromPartialKey (Choice ga _) (Just (LeftF k)) = Left (fromPartialKey ga k)
+fromPartialKey (Choice _ gb) (Just (RightF k)) = Right (fromPartialKey gb k)
+fromPartialKey (Both ga gb) (Just (BothF k1 k2)) =
+  (fromPartialKey ga k1, fromPartialKey gb k2)
+fromPartialKey (Apply f _ ga) k = f (fromPartialKey ga k)
+fromPartialKey _ _ = error "key doesn't match generator"
 
 -- | Checks whether a given 'Key' is compatible with this 'Generator'.  If the
 -- result is 'True', then 'fromKey' will succeed and produce a total value.
@@ -210,6 +218,9 @@ keySimilarity _ _ = 0
 valueSimilarity :: Generator a -> a -> a -> Rational
 valueSimilarity g x y = keySimilarity (toKey g x) (toKey g y)
 
+-- | A type representing the common structure of different kinds of 'GeneralKey'
+-- types, which represent specific decisions in a generator.  The @f@ parameter
+-- represents context that can be applied at each level.
 data KeyF f
   = TrivialF
   | LeftF (GeneralKey f)
@@ -238,37 +249,62 @@ instance Eq1 f => Eq (KeyF f) where
   BothF a b == BothF c d = liftEq (==) a c && liftEq (==) b d
   _ == _ = False
 
+-- | A 'GeneralKey' is a key with some context attached to each node,
+-- represented by a 'Functor' called @f@.
 type GeneralKey f = f (KeyF f)
 
+-- | A unique identifier for a total value produced by a 'Generator'.  You can
+-- think of this as a "plan" that a 'Generator' can follow to produce a specific
+-- value.
 type Key = GeneralKey Identity
 
-type ForcedKey = GeneralKey Maybe
+-- | A uniquely identifier for a partial value produced by a 'Generator'.
+type PartialKey = GeneralKey Maybe
 
+-- A 'GeneralKey' that contains all the information of a 'Key', and also keeps
+-- track of whether any given node has been observed.
 type ObservableKey = GeneralKey Observable
 
+-- A 'Functor' used to implement 'ObservableKey'.
 data Observable a = Observable (MVar Bool) a
 
+-- A utility function that's useful for recursive conversion functions on
+-- keys.
 onSubkeys ::
   Monad m => (GeneralKey f1 -> m (GeneralKey f2)) -> KeyF f1 -> m (KeyF f2)
-onSubkeys _ TrivialF = return TrivialF
+onSubkeys _ TrivialF = pure TrivialF
 onSubkeys op (LeftF k) = LeftF <$> op k
 onSubkeys op (RightF k) = RightF <$> op k
 onSubkeys op (BothF k1 k2) = BothF <$> op k1 <*> op k2
 
+-- Given a 'Key', produces an 'ObservableKey' that can keep track of demand.
 makeObservable :: Key -> IO ObservableKey
 makeObservable (Identity k) = do
   var <- newMVar False
   Observable var <$> onSubkeys makeObservable k
 
-observe :: ObservableKey -> IO ForcedKey
+-- Given an 'ObservableKey', produces a 'PartialKey' that records how much of
+-- the key has been demanded.
+observe :: ObservableKey -> IO PartialKey
 observe (Observable var k) = do
   forced <- readMVar var
-  if forced then Just <$> onSubkeys observe k else return Nothing
+  if forced then Just <$> onSubkeys observe k else pure Nothing
 
-spy :: ObservableKey -> IO Key
-spy (Observable var k) = unsafeInterleaveIO $ do
+-- Given an 'ObservableKey', produces a 'Key' that behaves exactly like the
+-- original (on which 'makeObservable' was called), but silently tracks demand
+-- as it is consumed.
+makeSpy :: ObservableKey -> IO Key
+makeSpy (Observable var k) = unsafeInterleaveIO $ do
   _ <- swapMVar var True
-  Identity <$> onSubkeys spy k
+  Identity <$> onSubkeys makeSpy k
+
+-- | Runs an action on a 'Key', and returns the demand on the 'Key' (as a
+-- 'PartialKey') in addition to the result of the action.
+spy :: Key -> (Key -> IO a) -> IO (PartialKey, a)
+spy k action = do
+  ok <- makeObservable k
+  x <- action =<< makeSpy ok
+  (,x) <$> observe ok
 
 -- | A 'Generator' that always generates the same value.
 --
