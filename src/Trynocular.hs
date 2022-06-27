@@ -17,6 +17,7 @@ module Trynocular
     pickKey,
     keys,
     fromKey,
+    compatibleKey,
     toKey,
     pickValue,
     values,
@@ -151,6 +152,18 @@ fromKey (Both ga gb) (Identity (BothF k1 k2)) =
   (fromKey ga k1, fromKey gb k2)
 fromKey (Apply f _ ga) k = f (fromKey ga k)
 fromKey _ _ = error "key doesn't match generator"
+
+-- | Checks whether a given 'Key' is compatible with this 'Generator'.  If the
+-- result is 'True', then 'fromKey' will succeed and produce a total value.
+-- Otherwise, it will produce a value containing bottoms.
+compatibleKey :: Generator a -> Key -> Bool
+compatibleKey Trivial (Identity TrivialF) = True
+compatibleKey (Choice ga _) (Identity (LeftF k)) = compatibleKey ga k
+compatibleKey (Choice _ gb) (Identity (RightF k)) = compatibleKey gb k
+compatibleKey (Both ga gb) (Identity (BothF k1 k2)) =
+  compatibleKey ga k1 && compatibleKey gb k2
+compatibleKey (Apply _ _ ga) k = compatibleKey ga k
+compatibleKey _ _ = False
 
 -- | Using a 'Generator', convert a value to a 'Key'.
 --
