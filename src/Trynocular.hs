@@ -23,7 +23,8 @@ module Trynocular
     values,
     keySimilarity,
     valueSimilarity,
-    -- Demand and observation
+
+    -- * Demand and observation
     ForcedKey,
     ObservableKey,
     Observable,
