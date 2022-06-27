@@ -9,11 +9,13 @@ import Data.Word (Word16, Word8)
 import GHC.Generics (Generic)
 import Generics.SOP qualified as SOP
 import StrictUtil (strictCheck)
-import Test.Hspec (describe, hspec, it, shouldBe)
+import Test.Hspec (describe, hspec, it, shouldBe, shouldReturn)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
 import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
-import Trynocular (Generable (..), Generator, fromKey, pickKey, toKey, values)
+import Trynocular (Generable (..), Generator, fromKey, pickKey, toKey, values, makeObservable, spy, observe, KeyF (..))
+import Control.Exception (evaluate)
+import Control.DeepSeq (rnf)
 
 data Foo
   = Foo1 String !Word
@@ -133,3 +135,25 @@ main = hspec $ do
         it "Float" $ strictCheck spec (viaKey @Float)
         it "Double" $ strictCheck spec (viaKey @Double)
         it "Foo" $ strictCheck spec (viaKey @Foo)
+
+  describe "observable demand" $ do
+    it "reports total demand" $ do
+      let key = toKey genAny (Just ())
+      observable <- makeObservable key
+      spiedKey <- spy observable
+      _ <- evaluate (rnf (fromKey genAny spiedKey :: Maybe ()))
+      observe observable `shouldReturn` Just (RightF (Just TrivialF))
+
+    it "reports no demand" $ do
+      let key = toKey genAny (Just ())
+      observable <- makeObservable key
+      _spiedKey <- spy observable
+      -- Do nothing
+      observe observable `shouldReturn` Nothing
+
+    it "reports partial demand" $ do
+      let key = toKey genAny (Just ())
+      observable <- makeObservable key
+      spiedKey <- spy observable
+      _ <- evaluate (fromKey genAny spiedKey :: Maybe ())
+      observe observable `shouldReturn` Just (RightF Nothing)

@@ -44,6 +44,7 @@ test-suite trynocular-test
     main-is:          Main.hs
     other-modules:    StrictUtil
     build-depends:    base
+                    , deepseq
                     , generics-sop
                     , hspec
                     , trynocular
