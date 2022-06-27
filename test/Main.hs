@@ -148,15 +148,18 @@ main = hspec $ do
   describe "observable demand" $ do
     it "reports total demand" $ do
       (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
-        evaluate (rnf (fromKey genAny key :: Maybe ()))
+        let x = fromKey genAny key :: Maybe ()
+        evaluate (rnf x) -- Evaluates x deeply using deepseq
       partialKey `shouldBe` Just (RightF (Just TrivialF))
 
     it "reports no demand" $ do
-      (partialKey, _) <- spy (toKey genAny (Just ())) $ \_key -> do
-        return ()
+      (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
+        let _x = fromKey genAny key :: Maybe ()
+        return () -- Doesn't evaluate x at all
       partialKey `shouldBe` Nothing
 
     it "reports partial demand" $ do
       (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
-        evaluate (fromKey genAny key :: Maybe ())
+        let x = fromKey genAny key :: Maybe ()
+        evaluate x -- Evaluates x shallowly (to weak head normal form)
       partialKey `shouldBe` Just (RightF Nothing)
