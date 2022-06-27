@@ -20,8 +20,8 @@ module Trynocular
     toKey,
     pickValue,
     values,
-    similarity,
-
+    keySimilarity,
+    valueSimilarity,
     -- Demand and observation
     ForcedKey,
     ObservableKey,
@@ -59,6 +59,7 @@ where
 import Control.Arrow ((&&&))
 import Control.Concurrent (MVar, newMVar, readMVar, swapMVar)
 import Data.Char (chr, ord)
+import Data.Functor.Classes (Eq1 (..), Show1 (..))
 import Data.Functor.Identity (Identity (..))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Kind (Type)
@@ -178,47 +179,49 @@ pickValue g = fromKey g <$> pickKey g
 values :: Generator a -> [a]
 values g = fromKey g <$> keys g
 
-similarity :: Generator a -> a -> a -> Rational
-similarity g x y = go (toKey g x) (toKey g y)
-  where
-    go :: Key -> Key -> Rational
-    go (Identity TrivialF) (Identity TrivialF) = 1
-    go (Identity (LeftF k1)) (Identity (LeftF k2)) = 0.5 + 0.5 * go k1 k2
-    go (Identity (RightF k1)) (Identity (RightF k2)) = 0.5 + 0.5 * go k1 k2
-    go (Identity (BothF k1 k2)) (Identity (BothF k3 k4)) = (go k1 k3 + go k2 k4) / 2
-    go _ _ = 0
+-- | Produces a similarity score between two values.  Similarity is between 0
+-- and 1, and a key has a similarity of 1 only to itself.
+keySimilarity :: Key -> Key -> Rational
+keySimilarity (Identity TrivialF) (Identity TrivialF) = 1
+keySimilarity (Identity (LeftF k1)) (Identity (LeftF k2)) =
+  0.5 + 0.5 * keySimilarity k1 k2
+keySimilarity (Identity (RightF k1)) (Identity (RightF k2)) =
+  0.5 + 0.5 * keySimilarity k1 k2
+keySimilarity (Identity (BothF k1 k2)) (Identity (BothF k3 k4)) =
+  (keySimilarity k1 k3 + keySimilarity k2 k4) / 2
+keySimilarity _ _ = 0
 
--- To test:
+-- | Produces a similarity score between two values.  Similarity is between 0
+-- and 1, and a value has a similarity of 1 only to itself.
+valueSimilarity :: Generator a -> a -> a -> Rational
+valueSimilarity g x y = keySimilarity (toKey g x) (toKey g y)
 
--- Initialize probabilities to 0.5 for each Choice.
--- Initialize the coverage expectation to some initial value.
--- LOOP:
---   Generate a random test case that differs from past test cases in the portion that was forced.
---   Run the test, and fail if it fails.
---   Observe how much of the key was forced.
---   Compare new coverage percent with expectation.
---     If > expectation, then increase probability of the choices we made that were forced
---     If < expectation, then decrease probability of the choices we made that were forced
---   Update coverage expectation based on an exponential moving average.
---     New coverage expectation = alpha * old coverage expectation + (1 - alpha) * observed new coverage percent
---   If termination condition then exit.  Else repeat
+data KeyF f
+  = TrivialF
+  | LeftF (GeneralKey f)
+  | RightF (GeneralKey f)
+  | BothF (GeneralKey f) (GeneralKey f)
 
--- observeDemand :: Key -> (Key -> IO ()) -> IO KeyDemand
+instance Show1 f => Show (KeyF f) where
+  showsPrec _ TrivialF = showString "TrivialF"
+  showsPrec p (LeftF k) =
+    showParen (p > 10) $
+      showString "LeftF " . liftShowsPrec showsPrec showList 11 k
+  showsPrec p (RightF k) =
+    showParen (p > 10) $
+      showString "RightF " . liftShowsPrec showsPrec showList 11 k
+  showsPrec p (BothF k1 k2) =
+    showParen (p > 10) $
+      showString "BothF "
+        . liftShowsPrec showsPrec showList 11 k1
+        . showString " "
+        . liftShowsPrec showsPrec showList 11 k2
 
-data KeyF f = TrivialF | LeftF (GeneralKey f) | RightF (GeneralKey f) | BothF (GeneralKey f) (GeneralKey f)
-
-instance Show (KeyF Identity) where
-  show TrivialF = "Trivial"
-  show (LeftF k) = "Left " ++ show (runIdentity k)
-  show (RightF k) = "Right " ++ show (runIdentity k)
-  show (BothF k1 k2) =
-    "Both " ++ show (runIdentity k1) ++ " " ++ show (runIdentity k2)
-
-instance Eq (KeyF Identity) where
+instance Eq1 f => Eq (KeyF f) where
   TrivialF == TrivialF = True
-  LeftF a == LeftF b = a == b
-  RightF a == RightF b = a == b
-  BothF a b == BothF c d = a == c && b == d
+  LeftF a == LeftF b = liftEq (==) a b
+  RightF a == RightF b = liftEq (==) a b
+  BothF a b == BothF c d = liftEq (==) a c && liftEq (==) b d
   _ == _ = False
 
 type GeneralKey f = f (KeyF f)
@@ -231,7 +234,8 @@ type ObservableKey = GeneralKey Observable
 
 data Observable a = Observable (MVar Bool) a
 
-onSubkeys :: Monad m => (GeneralKey f1 -> m (GeneralKey f2)) -> KeyF f1 -> m (KeyF f2)
+onSubkeys ::
+  Monad m => (GeneralKey f1 -> m (GeneralKey f2)) -> KeyF f1 -> m (KeyF f2)
 onSubkeys _ TrivialF = return TrivialF
 onSubkeys op (LeftF k) = LeftF <$> op k
 onSubkeys op (RightF k) = RightF <$> op k
