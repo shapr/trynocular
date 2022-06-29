@@ -58,7 +58,7 @@ where
 import Control.Arrow ((&&&))
 import Control.Concurrent (MVar, newMVar, readMVar, swapMVar)
 import Data.Char (chr, ord)
-import Data.Functor.Classes (Eq1 (..), Show1 (..))
+import Data.Functor.Classes (Eq1 (..), Show1 (..), Ord1 (..))
 import Data.Functor.Identity (Identity (..))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Kind (Type)
@@ -248,6 +248,21 @@ instance Eq1 f => Eq (KeyF f) where
   RightF a == RightF b = liftEq (==) a b
   BothF a b == BothF c d = liftEq (==) a c && liftEq (==) b d
   _ == _ = False
+
+instance Ord1 f => Ord (KeyF f) where
+  compare TrivialF TrivialF = EQ
+  compare TrivialF _ = LT
+  compare (LeftF _) TrivialF = GT
+  compare (LeftF a) (LeftF b) = liftCompare compare a b
+  compare (LeftF _) _ = LT
+  compare (RightF _) (BothF _ _) = LT
+  compare (RightF a) (RightF b) = liftCompare compare a b
+  compare (RightF _) _ = GT
+  compare (BothF a b) (BothF c d) =
+    case liftCompare compare a c of
+      EQ -> liftCompare compare b d
+      cmp -> cmp
+  compare (BothF _ _) _ = GT
 
 -- | A 'GeneralKey' is a key with some context attached to each node,
 -- represented by a 'Functor' called @f@.
