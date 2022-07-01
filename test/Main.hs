@@ -1,63 +1,33 @@
 {-# LANGUAGE DataKinds #-}
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 module Main where
 
-import Control.DeepSeq (rnf)
 import Control.Exception (evaluate)
-import Control.Monad (replicateM_)
-import Data.Int (Int16, Int8)
+import Data.Functor.Identity (Identity (..))
 import Data.List (nub, sort)
-import Data.Word (Word16, Word8)
+import Data.Word (Word8)
 import GHC.Generics (Generic)
-import Generics.SOP qualified as SOP
-import StrictUtil (strictCheck)
-import Test.Hspec (describe, hspec, it, shouldBe)
-import Test.Hspec.QuickCheck (prop)
-import Test.QuickCheck (Arbitrary (..), Property, genericShrink, oneof, (===))
-import Test.StrictCheck (Consume, Produce (..), Shaped, Spec (..), recur)
+import Test.Hspec (describe, hspec, it, shouldBe, shouldReturn)
 import Trynocular
   ( Generable (..),
-    Generator,
+    Key,
     KeyF (..),
+    PartialKey,
     fromKey,
-    pickKey,
+    keys,
     spy,
-    toKey,
+    totalKey,
     values,
   )
 
 data Foo
-  = Foo1 String !Word
-  | Foo2 [Integer]
+  = Foo1 String Word
+  | Foo2 [Integer] !Bool
   | Foo3 Foo Foo
   deriving (Generic, Eq, Show)
 
-instance Arbitrary Foo where
-  arbitrary =
-    oneof
-      [ Foo1 <$> arbitrary <*> arbitrary,
-        Foo2 <$> arbitrary,
-        Foo3 <$> arbitrary <*> arbitrary
-      ]
-  shrink = genericShrink
-
-instance Produce Foo where
-  produce =
-    oneof
-      [ Foo1 <$> recur <*> recur,
-        Foo2 <$> recur,
-        Foo3 <$> recur <*> recur
-      ]
-
 instance Generable Foo
-
-instance Shaped Foo
-
-instance SOP.Generic Foo
-
-instance SOP.HasDatatypeInfo Foo
-
-instance Consume Foo
 
 main :: IO ()
 main = hspec $ do
@@ -71,7 +41,7 @@ main = hspec $ do
         `shouldBe` [[], [()], [(), ()], [(), (), ()], [(), (), (), ()]]
     it "generates ADTs" $ do
       let isFoo1 x = case x of (Foo1 _ _) -> True; _ -> False
-          isFoo2 x = case x of (Foo2 _) -> True; _ -> False
+          isFoo2 x = case x of (Foo2 _ _) -> True; _ -> False
           isFoo3 x = case x of (Foo3 _ _) -> True; _ -> False
           vals = take 100 (values genAny)
 
@@ -80,86 +50,247 @@ main = hspec $ do
       any isFoo3 vals `shouldBe` True
       nub vals `shouldBe` vals
 
-    describe "toKey genAny . fromKey genAny == id" $ do
-      let equalityTest :: (Generable a, Show a, Eq a) => Generator a -> IO ()
-          equalityTest g = do
-            k <- pickKey g
-            toKey g (fromKey g k) `shouldBe` k
-
-      it "()" $ replicateM_ 1000 $ equalityTest (genAny @())
-      it "Int8" $ replicateM_ 1000 $ equalityTest (genAny @Int8)
-      it "Word8" $ replicateM_ 1000 $ equalityTest (genAny @Word8)
-      it "Int16" $ replicateM_ 1000 $ equalityTest (genAny @Int16)
-      it "Word16" $ replicateM_ 1000 $ equalityTest (genAny @Word16)
-      it "Maybe Int8" $ replicateM_ 1000 $ equalityTest (genAny @(Maybe Int8))
-      it "Char" $ replicateM_ 1000 $ equalityTest (genAny @Char)
-      it "[Char]" $ replicateM_ 1000 $ equalityTest (genAny @[Char])
-      it "Integer" $ replicateM_ 1000 $ equalityTest (genAny @Integer)
-      it "Float" $ replicateM_ 1000 $ equalityTest (genAny @Float)
-      it "Double" $ replicateM_ 1000 $ equalityTest (genAny @Double)
-      it "Foo" $ replicateM_ 1000 $ equalityTest (genAny @Foo)
-
-    describe "fromKey genAny . toKey genAny == id" $ do
-      let viaKey :: Generable a => a -> a
-          viaKey = fromKey genAny . toKey genAny
-
-      describe "check equality" $ do
-        let equalityProp :: (Generable a, Show a, Eq a) => a -> Property
-            equalityProp = \(x :: a) -> x === viaKey x
-
-        prop "()" $ equalityProp @()
-        prop "Int8" $ equalityProp @Int8
-        prop "Word8" $ equalityProp @Word8
-        prop "Int16" $ equalityProp @Int16
-        prop "Word16" $ equalityProp @Word16
-        prop "Maybe Int8" $ equalityProp @(Maybe Int8)
-        prop "Char" $ equalityProp @Char
-        prop "[Char]" $ equalityProp @[Char]
-        prop "Integer" $ equalityProp @Integer
-        prop "Float" $ equalityProp @Float
-        prop "Double" $ equalityProp @Double
-        prop "Foo" $ equalityProp @Foo
-
-      describe "check strictness" $ do
-        let spec :: Test.StrictCheck.Spec '[a] a
-            spec = Spec $ \predict d _x -> predict d
-
-        describe "check that spec describes id" $ do
-          it "()" $ strictCheck spec (id @())
-          it "Int8" $ strictCheck spec (id @Int)
-          it "Maybe Int8" $ strictCheck spec (id @(Maybe Int))
-          it "Char" $ strictCheck spec (id @Char)
-          it "[Char]" $ strictCheck spec (id @[Char])
-          it "Integer" $ strictCheck spec (id @Integer)
-          it "Float" $ strictCheck spec (id @Float)
-          it "Double" $ strictCheck spec (id @Double)
-          it "Foo" $ strictCheck spec (id @Foo)
-
-        it "()" $ strictCheck spec (viaKey @())
-        it "Int8" $ strictCheck spec (viaKey @Int)
-        it "Maybe Int8" $ strictCheck spec (viaKey @(Maybe Int))
-        it "Char" $ strictCheck spec (viaKey @Char)
-        it "[Char]" $ strictCheck spec (viaKey @[Char])
-        it "Integer" $ strictCheck spec (viaKey @Integer)
-        it "Float" $ strictCheck spec (viaKey @Float)
-        it "Double" $ strictCheck spec (viaKey @Double)
-        it "Foo" $ strictCheck spec (viaKey @Foo)
-
   describe "observable demand" $ do
-    it "reports total demand" $ do
-      (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
-        let x = fromKey genAny key :: Maybe ()
-        evaluate (rnf x) -- Evaluates x deeply using deepseq
-      partialKey `shouldBe` Just (RightF (Just TrivialF))
+    let getDemand :: forall a b. Generable a => Key -> (a -> b) -> IO PartialKey
+        getDemand origKey f =
+          fst <$> spy origKey (\key -> evaluate (f (fromKey genAny key)))
 
-    it "reports no demand" $ do
-      (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
-        let _x = fromKey genAny key :: Maybe ()
-        return () -- Doesn't evaluate x at all
-      partialKey `shouldBe` Nothing
+    describe "Just ()" $ do
+      let key = Identity (RightF (Identity TrivialF))
 
-    it "reports partial demand" $ do
-      (partialKey, _) <- spy (toKey genAny (Just ())) $ \key -> do
-        let x = fromKey genAny key :: Maybe ()
-        evaluate x -- Evaluates x shallowly (to weak head normal form)
-      partialKey `shouldBe` Just (RightF Nothing)
+      it "has the correct key" $ do
+        fromKey genAny key `shouldBe` Just ()
+
+      -- Demand lattice:
+      --
+      --     Just ()
+      --
+      --        |
+      --
+      --     Just ⊥
+      --
+      --        |
+      --
+      --        ⊥
+
+      it "reports demand" $ do
+        getDemand @(Maybe ()) key (\_ -> ()) `shouldReturn` Nothing
+
+      it "reports demand" $ do
+        getDemand @(Maybe ()) key (\(Just _) -> ())
+          `shouldReturn` Just (RightF Nothing)
+
+      it "reports demand" $ do
+        getDemand @(Maybe ()) key (\(Just ()) -> ())
+          `shouldReturn` Just (RightF (Just TrivialF))
+
+    describe "ADT" $ do
+      let strKey = head . keys $ (genAny @String)
+      let wordKey = head . keys $ (genAny @Word)
+      let integerListKey = head . keys $ (genAny @[Integer])
+      let boolKey = head . keys $ (genAny @Bool)
+      let subFooKey = head . keys $ (genAny @Foo)
+
+      describe "Foo1 \"\" 0" $ do
+        let key = Identity (LeftF (Identity (BothF strKey wordKey)))
+
+        it "has the correct key" $ do
+          fromKey genAny key `shouldBe` Foo1 "" 0
+
+        -- Demand lattice:
+        --
+        --         Foo1 "" 0
+        --
+        --        /         \
+        --       /           \
+        --
+        --  Foo1 ⊥ 0      Foo1 "" ⊥
+        --
+        --       \           /
+        --        \         /
+        --
+        --         Foo1 ⊥ ⊥
+        --
+        --             |
+        --             |
+        --
+        --             ⊥
+
+        it "reports demand" $ do
+          getDemand @Foo key (\_ -> ()) `shouldReturn` Nothing
+
+        it "reports demand" $ do
+          getDemand @Foo key (\(Foo1 _ _) -> ())
+            `shouldReturn` Just
+              (LeftF (Just (BothF Nothing Nothing)))
+
+        it "reports demand" $ do
+          getDemand @Foo key (\(Foo1 "" _) -> ())
+            `shouldReturn` Just
+              (LeftF (Just (BothF (totalKey strKey) Nothing)))
+
+        it "reports demand" $ do
+          getDemand @Foo key (\(Foo1 _ 0) -> ())
+            `shouldReturn` Just
+              (LeftF (Just (BothF Nothing (totalKey wordKey))))
+
+        it "reports demand" $ do
+          getDemand @Foo key (\(Foo1 "" 0) -> ())
+            `shouldReturn` Just
+              (LeftF (Just (BothF (totalKey strKey) (totalKey wordKey))))
+
+      describe "Foo2 []" $ do
+        let key =
+              Identity
+                ( RightF
+                    (Identity (LeftF (Identity (BothF integerListKey boolKey))))
+                )
+
+        it "has the correct key" $ do
+          fromKey genAny key `shouldBe` Foo2 [] False
+
+        -- Demand lattice (the Bool field is strict!):
+        --
+        --        Foo2 [] False
+        --
+        --             |
+        --             |
+        --
+        --        Foo2 ⊥ False
+        --
+        --             |
+        --             |
+        --
+        --             ⊥
+
+        it "reports demand" $ do
+          getDemand @Foo key (\_ -> ()) `shouldReturn` Nothing
+
+        it "reports demand" $ do
+          getDemand @Foo key (\(Foo2 _ _) -> ())
+            `shouldReturn` Just
+              ( RightF
+                  ( Just
+                      ( LeftF
+                          ( Just
+                              ( BothF
+                                  Nothing
+                                  (totalKey boolKey) -- Strict field
+                              )
+                          )
+                      )
+                  )
+              )
+
+        it "reports demand" $ do
+          getDemand @Foo key (\(Foo2 [] _) -> ())
+            `shouldReturn` Just
+              ( RightF
+                  ( Just
+                      ( LeftF
+                          ( Just
+                              ( BothF
+                                  (totalKey integerListKey)
+                                  (totalKey boolKey) -- Strict field
+                              )
+                          )
+                      )
+                  )
+              )
+
+      describe "Foo3 (Foo1 [] 0) (Foo1 [] 0)" $ do
+        let key =
+              Identity
+                ( RightF
+                    (Identity (RightF (Identity (BothF subFooKey subFooKey))))
+                )
+
+        it "has the correct key" $ do
+          fromKey genAny key `shouldBe` Foo3 (Foo1 "" 0) (Foo1 "" 0)
+
+    describe "[(), ()]" $ do
+      let nil f = f (LeftF (f TrivialF))
+      let cons f x xs = f (RightF (f (BothF x xs)))
+      let unit f = f TrivialF
+
+      let key f = cons f (unit f) (cons f (unit f) (nil f))
+
+      it "has the correct key" $ do
+        fromKey genAny (key Identity) `shouldBe` [(), ()]
+
+      -- Demand lattice:
+      --
+      --                           () : () : []
+      --
+      --                         /       |       \
+      --                        /        |        \
+      --
+      --          ⊥ : () : []       () : ⊥ : []      () : () : ⊥
+      --
+      --               |       \ /       |       \ /       |
+      --               |        X        |        X        |
+      --               |       / \       |       / \       |
+      --
+      --          ⊥ : ⊥ : []        ⊥ : () : ⊥       () : ⊥ : ⊥
+      --
+      --                       \         |         /       |
+      --                        \        |        /        |
+      --                         \       |       /         |
+      --                          \      |      /          |
+      --                       
+      --                             ⊥ : ⊥ : ⊥          () : ⊥
+      --
+      --                                        \       /
+      --                                         \     /
+      --                                          \   /
+      --
+      --                                          ⊥ : ⊥
+      --
+      --                                            |
+      --                                            |
+      --
+      --                                            ⊥
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\_ -> ())
+          `shouldReturn` Nothing
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(_ : _) -> ())
+          `shouldReturn` cons Just Nothing Nothing
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(_ : _ : _) -> ())
+          `shouldReturn` cons Just Nothing (cons Just Nothing Nothing)
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(() : _) -> ())
+          `shouldReturn` cons Just (unit Just) Nothing
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(_ : _ : []) -> ())
+          `shouldReturn` cons Just Nothing (cons Just Nothing (nil Just))
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(_ : () : _) -> ())
+          `shouldReturn` cons Just Nothing (cons Just (unit Just) Nothing)
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(() : _ : _) -> ())
+          `shouldReturn` cons Just (unit Just) (cons Just Nothing Nothing)
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(() : () : _) -> ())
+          `shouldReturn` cons Just (unit Just) (cons Just (unit Just) Nothing)
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(() : _ : []) -> ())
+          `shouldReturn` cons Just (unit Just) (cons Just Nothing (nil Just))
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(_ : () : []) -> ())
+          `shouldReturn` cons Just Nothing (cons Just (unit Just) (nil Just))
+
+      it "reports demand" $ do
+        getDemand @[()] (key Identity) (\(() : () : []) -> ())
+          `shouldReturn` key Just
