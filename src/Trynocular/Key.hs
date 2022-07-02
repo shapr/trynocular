@@ -3,7 +3,8 @@ module Trynocular.Key
     keySimilarity,
     PartialKey,
     totalKey,
-    isPartially,
+    partialKeys,
+    subsumes,
     GeneralKey,
     KeyF (..),
     spy,
@@ -85,6 +86,45 @@ keySimilarity _ _ = 0
 -- | A uniquely identifier for a partial value produced by a 'Generator'.
 type PartialKey = GeneralKey Maybe
 
+-- | Produces a 'PartialKey' that is actually total.
+totalKey :: Key -> PartialKey
+totalKey (Identity k) = Just (mapSubkeys totalKey k)
+
+-- | Returns all possible 'PartialKey's that subsume a given 'Key'.
+partialKeys :: Key -> [PartialKey]
+partialKeys (Identity k) = Nothing : (Just <$> traverseSubkeys partialKeys k)
+
+-- | Determines whether a 'PartialKey' subsumes another 'GeneralKey' (either a
+-- 'Key' or a 'PartialKey') subsumes another if any value of the first key
+-- agrees with the second except when the first key is partial.
+subsumes :: forall f. Foldable f => PartialKey -> GeneralKey f -> Bool
+Nothing `subsumes` _ = True
+Just key1 `subsumes` key2 = any (go key1) key2
+  where
+    go :: KeyF Maybe -> KeyF f -> Bool
+    go TrivialF TrivialF = True
+    go (LeftF k) (LeftF k') = k `subsumes` k'
+    go (RightF k) (RightF k') = k `subsumes` k'
+    go (BothF k1 k2) (BothF k1' k2') = k1 `subsumes` k1' && k2 `subsumes` k2'
+    go _ _ = False
+
+-- A utility function that's useful for recursive conversion functions on
+-- keys.
+mapSubkeys :: (GeneralKey f1 -> GeneralKey f2) -> KeyF f1 -> KeyF f2
+mapSubkeys f k = runIdentity (traverseSubkeys (pure . f) k)
+
+-- A utility function that's useful for recursive effectful conversion functions
+-- on keys.
+traverseSubkeys ::
+  Applicative m =>
+  (GeneralKey f1 -> m (GeneralKey f2)) ->
+  KeyF f1 ->
+  m (KeyF f2)
+traverseSubkeys _ TrivialF = pure TrivialF
+traverseSubkeys op (LeftF k) = LeftF <$> op k
+traverseSubkeys op (RightF k) = RightF <$> op k
+traverseSubkeys op (BothF k1 k2) = BothF <$> op k1 <*> op k2
+
 -- A 'GeneralKey' that contains all the information of a 'Key', and also keeps
 -- track of whether any given node has been observed.
 type ObservableKey = GeneralKey Observable
@@ -92,42 +132,17 @@ type ObservableKey = GeneralKey Observable
 -- A 'Functor' used to implement 'ObservableKey'.
 data Observable a = Observable (MVar Bool) a
 
-totalKey :: Key -> PartialKey
-totalKey (Identity k) = Just (onSubkeys totalKey k)
-
-isPartially :: PartialKey -> Key -> Bool
-isPartially Nothing _ = True
-isPartially (Just TrivialF) (Identity TrivialF) = True
-isPartially (Just (LeftF k)) (Identity (LeftF k')) = isPartially k k'
-isPartially (Just (RightF k)) (Identity (RightF k')) = isPartially k k'
-isPartially (Just (BothF k1 k2)) (Identity (BothF k1' k2')) =
-  isPartially k1 k1' && isPartially k2 k2'
-isPartially _ _ = False
-
--- A utility function that's useful for recursive conversion functions on
--- keys.
-onSubkeysM ::
-  Monad m => (GeneralKey f1 -> m (GeneralKey f2)) -> KeyF f1 -> m (KeyF f2)
-onSubkeysM _ TrivialF = pure TrivialF
-onSubkeysM op (LeftF k) = LeftF <$> op k
-onSubkeysM op (RightF k) = RightF <$> op k
-onSubkeysM op (BothF k1 k2) = BothF <$> op k1 <*> op k2
-
-onSubkeys :: (GeneralKey f1 -> GeneralKey f2) -> KeyF f1 -> KeyF f2
-onSubkeys f k = runIdentity (onSubkeysM (pure . f) k)
-
 -- Given a 'Key', produces an 'ObservableKey' that can keep track of demand.
 makeObservable :: Key -> IO ObservableKey
-makeObservable (Identity k) = do
-  var <- newMVar False
-  Observable var <$> onSubkeysM makeObservable k
+makeObservable (Identity k) =
+  Observable <$> newMVar False <*> traverseSubkeys makeObservable k
 
 -- Given an 'ObservableKey', produces a 'PartialKey' that records how much of
 -- the key has been demanded.
 observe :: ObservableKey -> IO PartialKey
 observe (Observable var k) = do
   forced <- readMVar var
-  if forced then Just <$> onSubkeysM observe k else pure Nothing
+  if forced then Just <$> traverseSubkeys observe k else pure Nothing
 
 -- Given an 'ObservableKey', produces a 'Key' that behaves exactly like the
 -- original (on which 'makeObservable' was called), but silently tracks demand
@@ -135,7 +150,7 @@ observe (Observable var k) = do
 makeSpy :: ObservableKey -> IO Key
 makeSpy (Observable var k) = unsafeInterleaveIO $ do
   _ <- swapMVar var True
-  Identity <$> onSubkeysM makeSpy k
+  Identity <$> traverseSubkeys makeSpy k
 
 -- | Runs an action on a 'Key', and returns the demand on the 'Key' (as a
 -- 'PartialKey') in addition to the result of the action.

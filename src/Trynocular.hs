@@ -13,7 +13,7 @@ module Trynocular
     keySimilarity,
     PartialKey,
     totalKey,
-    isPartially,
+    subsumes,
     GeneralKey,
     KeyF (..),
     spy,
@@ -61,9 +61,9 @@ import Trynocular.Key
     Key,
     KeyF (..),
     PartialKey,
-    isPartially,
     keySimilarity,
     spy,
+    subsumes,
     totalKey,
   )
 import Unsafe.Coerce (unsafeCoerce)
