@@ -69,9 +69,8 @@ import Trynocular.Key
 import Unsafe.Coerce (unsafeCoerce)
 
 -- | A 'Generator' for a type knows how to enumerate or pick values for the
--- type, as well as how to represent values of the type as 'Key's.  The
--- representation as 'Key's is witnessed by 'toKey' and 'fromKey'.
--- This correspondence preserves not only equality, but strictness as well.
+-- type in terms of their 'Key', and how to actually build those values using
+-- 'fromKey'.  Crucially, 'fromKey' is maximally lazy in the 'Key'.
 data Generator :: Type -> Type where
   Trivial :: Generator ()
   Choice :: Generator a -> Generator b -> Generator (Either a b)
@@ -125,10 +124,9 @@ keys (Apply _ g) = keys g
 -- This is a partial function.  If the provided 'Key' is not compatible with
 -- the given generator, it will fail to return a total value.
 --
--- The conversion preserves strictness, in the sense that it forces only enough
--- of the key to satisfy the demand on the resulting value.  In particular, one
--- should have @'fromKey' g . 'toKey' g == 'id'@ on any value produced by
--- the generator @g@, not just in equality but in strictness as well.
+-- The conversion is maximally lazy in the 'Key', in the sense that it forces
+-- only as much of the key as needed to satisfy the demand on the resulting
+-- value.
 fromKey :: Generator a -> Key -> a
 fromKey Trivial (Identity TrivialF) = ()
 fromKey (Choice ga _) (Identity (LeftF k)) = Left (fromKey ga k)

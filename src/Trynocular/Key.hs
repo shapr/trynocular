@@ -1,3 +1,12 @@
+-- | A 'Key' is a plan for building a value.  There are two types of keys used
+-- here, though: a total 'Key', and a 'PartialKey', where the latter represents
+-- a partial value, some of whose subterms can be undefined.  When both forms
+-- are possible, 'GeneralKey' can be used.  In fact, 'Key' is a synonym for
+-- 'GeneralKey Identity', and 'PartialKey' is a synonym for 'GeneralKey Maybe'.
+--
+-- One way to obtain a 'PartialKey' is with 'spy', which observe the strictness
+-- of an 'IO' action on a 'Key', producing a 'PartialKey' that expresses which
+-- parts of the 'Key' were forced by the action.
 module Trynocular.Key
   ( Key,
     keySimilarity,
@@ -66,9 +75,9 @@ instance Ord1 f => Ord (KeyF f) where
       cmp -> cmp
   compare (BothF _ _) _ = GT
 
--- | A unique identifier for a total value produced by a 'Generator'.  You can
--- think of this as a "plan" that a 'Generator' can follow to produce a specific
--- value.
+-- | A unique identifier for a value produced by a 'Trynocular.Generator'.  You
+-- can think of this as a "plan" that a 'Trynocular.Generator' can follow to
+-- produce a specific value.
 type Key = GeneralKey Identity
 
 -- | Produces a similarity score between two values.  Similarity is between 0
@@ -83,7 +92,8 @@ keySimilarity (Identity (BothF k1 k2)) (Identity (BothF k3 k4)) =
   (keySimilarity k1 k3 + keySimilarity k2 k4) / 2
 keySimilarity _ _ = 0
 
--- | A uniquely identifier for a partial value produced by a 'Generator'.
+-- | A uniquely identifier for a partial value produced by a
+-- 'Trynocular.Generator'.
 type PartialKey = GeneralKey Maybe
 
 -- | Produces a 'PartialKey' that is actually total.
