@@ -1,30 +1,21 @@
 cabal-version:      2.4
 name:               trynocular
 version:            0.1.0.0
-
--- A short (one-line) description of the package.
 -- synopsis:
-
--- A longer description of the package.
 -- description:
-
--- A URL where users can report bugs.
--- bug-reports:
-
--- The license under which the package is released.
--- license:
-author:             Shae Erisson
+-- category:
+bug-reports:        https://github.com/shapr/trynocular/issues
+license:            MIT
+author:             Shae Erisson and Chris Smith
 maintainer:         shae@scannedinavian.com
 
--- A copyright notice.
--- copyright:
--- category:
 extra-source-files:
     CHANGELOG.md
     README.md
 
 library
     exposed-modules:  Trynocular
+                    , Trynocular.Key
     build-depends:    base
                     , random
                     , semigroupoids
@@ -33,24 +24,12 @@ library
     default-language: GHC2021
     ghc-options:      -Wall
 
-executable trynocular
-    main-is:          Main.hs
-    build-depends:    base
-    hs-source-dirs:   app
-    default-language: GHC2021
-    ghc-options:      -Wall
-
 test-suite trynocular-test
     type:             exitcode-stdio-1.0
     main-is:          Main.hs
-    other-modules:    StrictUtil
     build-depends:    base
-                    , deepseq
-                    , generics-sop
                     , hspec
                     , trynocular
-                    , QuickCheck
-                    , StrictCheck
     hs-source-dirs:   test
     default-language: GHC2021
     ghc-options:      -Wall
