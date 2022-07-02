@@ -9,17 +9,9 @@ import Data.List (nub, sort)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
 import Test.Hspec (describe, hspec, it, shouldBe, shouldReturn)
-import Trynocular
-  ( Generable (..),
-    Key,
-    KeyF (..),
-    PartialKey,
-    fromKey,
-    keys,
-    spy,
-    totalKey,
-    values,
-  )
+import Trynocular.Generable (Generable (..))
+import Trynocular.Generator (fromKey, keys, values)
+import Trynocular.Key (Key, KeyF (..), PartialKey, spy, totalKey)
 
 data Foo
   = Foo1 String Word
@@ -237,7 +229,7 @@ main = hspec $ do
       --                        \        |        /        |
       --                         \       |       /         |
       --                          \      |      /          |
-      --                       
+      --
       --                             ⊥ : ⊥ : ⊥          () : ⊥
       --
       --                                        \       /
