@@ -19,6 +19,7 @@ library
                     , Trynocular.Generator
                     , Trynocular.Key
                     , Trynocular.PartialKeySet
+                    , Trynocular.TestHarness
     build-depends:    base
                     , random
                     , semigroupoids
