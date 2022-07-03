@@ -8,11 +8,10 @@ module Trynocular.PartialKeySet
   )
 where
 
-import Data.Foldable
-import Data.Functor.Identity
-import Trynocular.Key
+import Data.Foldable (Foldable (..))
+import Data.Functor.Identity (Identity (..))
+import Trynocular.Key (Key, KeyF (..), PartialKey)
 
--- Set PartialKey
 newtype PartialKeySet = PartialKeySet (PKTrie ())
 
 empty :: PartialKeySet
@@ -30,7 +29,6 @@ insert pk (PartialKeySet pkt) = PartialKeySet (insertPKTrie pk () pkt)
 member :: Key -> PartialKeySet -> Bool
 member k (PartialKeySet pkt) = not (null (lookupPKTrie k pkt))
 
--- Map PartialKey a
 data PKTrie a = EmptyPKTrie | NonEmptyPKTrie (NEPKTrie a)
 
 insertPKTrie :: PartialKey -> a -> PKTrie a -> PKTrie a
@@ -43,7 +41,6 @@ lookupPKTrie :: Key -> PKTrie a -> [a]
 lookupPKTrie _ EmptyPKTrie = []
 lookupPKTrie k (NonEmptyPKTrie nepkt) = lookupNEPKTrie k nepkt
 
--- NonEmptyMap PartialKey a
 newtype NEPKTrie a = NEPKTrie (SumTrie Identity KeyFTrie a)
 
 singletonNEPKTrie :: PartialKey -> a -> NEPKTrie a
@@ -91,7 +88,6 @@ fromBoth f g (BTrie l r) = f l <> g r
 
 newtype ProductTrie f g a = ProductTrie (f (g a))
 
--- NonEmptyMap (KeyF Maybe) a
 data KeyFTrie a
   = TrivialTrie a
   | ChoiceTrie (SumTrie NEPKTrie NEPKTrie a)
