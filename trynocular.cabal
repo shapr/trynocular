@@ -24,6 +24,7 @@ library
                     , random
                     , semigroupoids
                     , universe-base
+                    , hpc
     hs-source-dirs:   src
     default-language: GHC2021
     ghc-options:      -Wall
