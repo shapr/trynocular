@@ -23,6 +23,7 @@ where
 import Control.Concurrent (MVar, newMVar, readMVar, swapMVar)
 import Data.Functor.Classes (Eq1 (..), Ord1 (..), Show1 (..))
 import Data.Functor.Identity (Identity (..))
+import GHC.Generics (Generic)
 import System.IO.Unsafe (unsafeInterleaveIO)
 
 -- | A 'GeneralKey' is a key with some context attached to each node,
@@ -37,6 +38,7 @@ data KeyF f
   | LeftF (GeneralKey f)
   | RightF (GeneralKey f)
   | BothF (GeneralKey f) (GeneralKey f)
+  deriving (Generic)
 
 instance Show1 f => Show (KeyF f) where
   showsPrec _ TrivialF = showString "TrivialF"

@@ -33,6 +33,7 @@ test-suite trynocular-test
     build-depends:    base
                     , hspec
                     , trynocular
+                    , QuickCheck
     hs-source-dirs:   test
     default-language: GHC2021
     ghc-options:      -Wall

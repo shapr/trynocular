@@ -1,6 +1,8 @@
 module Trynocular.PartialKeySet
   ( PartialKeySet,
     empty,
+    singleton,
+    fromList,
     insert,
     member,
   )
@@ -15,6 +17,12 @@ newtype PartialKeySet = PartialKeySet (PKTrie ())
 
 empty :: PartialKeySet
 empty = PartialKeySet EmptyPKTrie
+
+singleton :: PartialKey -> PartialKeySet
+singleton k = insert k empty
+
+fromList :: [PartialKey] -> PartialKeySet
+fromList = foldr insert empty
 
 insert :: PartialKey -> PartialKeySet -> PartialKeySet
 insert pk (PartialKeySet pkt) = PartialKeySet (insertPKTrie pk () pkt)
