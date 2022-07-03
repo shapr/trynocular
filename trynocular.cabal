@@ -18,6 +18,7 @@ library
                     , Trynocular.Generable
                     , Trynocular.Generator
                     , Trynocular.Key
+                    , Trynocular.PartialKeySet
     build-depends:    base
                     , random
                     , semigroupoids
