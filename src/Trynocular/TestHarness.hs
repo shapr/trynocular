@@ -33,7 +33,7 @@ initialTestState generator action =
     generator
     action
     PartialKeySet.empty
-    (CoverageExpectation {coverageMean = 0.5, coverageVariance = 0.25})
+    (CoverageExpectation {coverageMean = 0.5, coverageVariance = 1})
 
 updateCoverageExpectation ::
   Double -> CoverageExpectation -> CoverageExpectation
@@ -49,7 +49,7 @@ updateGenerator :: Double -- ^ stddevs above or below
                 -> PartialKey -- ^ demanded portion of the key
                 -> Generator a -- ^ generator to update
                 -> Generator a -- ^ new updated generator
-updateGenerator score pkey gen = gen
+updateGenerator _score _pkey gen = gen
 
 testHarness :: TestState -> IO ()
 testHarness state@(TestState n generator action usedKeys coverage) = do
