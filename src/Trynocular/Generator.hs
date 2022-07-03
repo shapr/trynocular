@@ -31,7 +31,7 @@ import Data.Functor.Identity (Identity (..))
 import Data.Kind (Type)
 import Data.Universe.Helpers ((+*+), (+++))
 import System.IO.Unsafe (unsafeInterleaveIO)
-import System.Random (randomIO)
+import System.Random (randomRIO)
 import Trynocular.Key (Key, KeyF (..), PartialKey)
 
 -- | A 'Generator' for a type knows how to enumerate or pick values for the
@@ -39,7 +39,7 @@ import Trynocular.Key (Key, KeyF (..), PartialKey)
 -- 'fromKey'.  Crucially, 'fromKey' is maximally lazy in the 'Key'.
 data Generator :: Type -> Type where
   Trivial :: Generator ()
-  Choice :: Generator a -> Generator b -> Generator (Either a b)
+  Choice :: Double -> Generator a -> Generator b -> Generator (Either a b)
   Both :: Generator a -> Generator b -> Generator (a, b)
   Apply :: (a -> b) -> Generator a -> Generator b
 
@@ -47,7 +47,7 @@ instance Functor Generator where
   fmap = Apply
 
 instance Alt Generator where
-  a <!> b = either id id <$> Choice a b
+  a <!> b = either id id <$> Choice 0.5 a b
 
 instance Applicative Generator where
   pure x =
@@ -66,8 +66,8 @@ pickKey = unsafeInterleaveIO . go
   where
     go :: Generator a -> IO Key
     go Trivial = pure (Identity TrivialF)
-    go (Choice ga gb) =
-      randomIO >>= \case
+    go (Choice p ga gb) = do
+      (< p) <$> randomRIO (0, 1) >>= \case
         True -> Identity . LeftF <$> pickKey ga
         False -> Identity . RightF <$> pickKey gb
     go (Both ga gb) = Identity <$> (BothF <$> pickKey ga <*> pickKey gb)
@@ -79,7 +79,7 @@ pickKey = unsafeInterleaveIO . go
 -- left branch of a choice. See issue #1.
 keys :: Generator a -> [Key]
 keys Trivial = [Identity TrivialF]
-keys (Choice ga gb) =
+keys (Choice _ ga gb) =
   (Identity . LeftF <$> keys ga) +++ (Identity . RightF <$> keys gb)
 keys (Both ga gb) =
   Identity <$> (uncurry BothF <$> keys ga +*+ keys gb)
@@ -95,8 +95,8 @@ keys (Apply _ g) = keys g
 -- value.
 fromKey :: Generator a -> Key -> a
 fromKey Trivial (Identity TrivialF) = ()
-fromKey (Choice ga _) (Identity (LeftF k)) = Left (fromKey ga k)
-fromKey (Choice _ gb) (Identity (RightF k)) = Right (fromKey gb k)
+fromKey (Choice _ ga _) (Identity (LeftF k)) = Left (fromKey ga k)
+fromKey (Choice _ _ gb) (Identity (RightF k)) = Right (fromKey gb k)
 fromKey (Both ga gb) (Identity (BothF k1 k2)) =
   (fromKey ga k1, fromKey gb k2)
 fromKey (Apply f ga) k = f (fromKey ga k)
@@ -109,8 +109,8 @@ fromKey _ _ = error "key doesn't match generator"
 fromPartialKey :: Generator a -> PartialKey -> a
 fromPartialKey _ Nothing = undefined
 fromPartialKey Trivial (Just TrivialF) = ()
-fromPartialKey (Choice ga _) (Just (LeftF k)) = Left (fromPartialKey ga k)
-fromPartialKey (Choice _ gb) (Just (RightF k)) = Right (fromPartialKey gb k)
+fromPartialKey (Choice _ ga _) (Just (LeftF k)) = Left (fromPartialKey ga k)
+fromPartialKey (Choice _ _ gb) (Just (RightF k)) = Right (fromPartialKey gb k)
 fromPartialKey (Both ga gb) (Just (BothF k1 k2)) =
   (fromPartialKey ga k1, fromPartialKey gb k2)
 fromPartialKey (Apply f ga) k = f (fromPartialKey ga k)
@@ -121,8 +121,8 @@ fromPartialKey _ _ = error "key doesn't match generator"
 -- Otherwise, it will produce a value containing bottoms.
 compatibleKey :: Generator a -> Key -> Bool
 compatibleKey Trivial (Identity TrivialF) = True
-compatibleKey (Choice ga _) (Identity (LeftF k)) = compatibleKey ga k
-compatibleKey (Choice _ gb) (Identity (RightF k)) = compatibleKey gb k
+compatibleKey (Choice _ ga _) (Identity (LeftF k)) = compatibleKey ga k
+compatibleKey (Choice _ _ gb) (Identity (RightF k)) = compatibleKey gb k
 compatibleKey (Both ga gb) (Identity (BothF k1 k2)) =
   compatibleKey ga k1 && compatibleKey gb k2
 compatibleKey (Apply _ ga) k = compatibleKey ga k
