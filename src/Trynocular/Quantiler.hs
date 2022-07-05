@@ -1,7 +1,19 @@
 {-# LANGUAGE TypeFamilies #-}
 
-module Trynocular.Quantiler (Quantiler (..), NormalQuantiler, normalQuantiler, BetaQuantiler, betaQuantiler) where
+module Trynocular.Quantiler
+  ( Quantiler (..),
+    NormalQuantiler,
+    normalQuantiler,
+    BetaQuantiler,
+    betaQuantiler,
+    CompleteQuantiler,
+    emptyCompleteQuantiler,
+  )
+where
 
+import Data.FingerTree (FingerTree)
+import Data.FingerTree qualified as FingerTree
+import Data.Maybe (fromMaybe)
 import Numeric.SpecFunctions (erfc, incompleteBeta)
 
 class Quantiler q where
@@ -62,3 +74,47 @@ betaQuantiler (low, high) mean variance responsiveness =
     ((mean - low) / (high - low))
     (variance / (high - low) ^ (2 :: Int))
     responsiveness
+
+data CompleteQuantiler a = CompleteQuantiler
+  { _dataPoints :: FingerTree (Maybe (Counted a)) (Counted a)
+  }
+    deriving Show
+
+data Counted a = Counted {countedVal :: a, countedNum :: Int}
+    deriving Show
+
+instance Ord a => Semigroup (Counted a) where
+  Counted x xs <> Counted y ys = Counted (min x y) (xs + ys)
+
+instance Ord a => FingerTree.Measured (Maybe (Counted a)) (Counted a) where
+  measure = Just
+
+emptyCompleteQuantiler :: Ord a => CompleteQuantiler a
+emptyCompleteQuantiler = CompleteQuantiler FingerTree.empty
+
+instance Ord a => Quantiler (CompleteQuantiler a) where
+  type Datum (CompleteQuantiler a) = a
+  quantile (CompleteQuantiler dataPoints) x =
+    case FingerTree.search
+      (\_ r -> fromMaybe True ((<) <$> Just x <*> fmap countedVal r))
+      dataPoints of
+      FingerTree.Position l (Counted y n) r
+        | x == y ->
+            ( CompleteQuantiler (l <> (Counted y (n + 1) FingerTree.<| r)),
+              (fromIntegral (size l) + (fromIntegral n + 1) / 2)
+                / fromIntegral (1 + size dataPoints)
+            )
+        | otherwise ->
+            ( CompleteQuantiler
+                ( (l FingerTree.|> Counted y n)
+                    <> (Counted x 1 FingerTree.<| r)
+                ),
+              (fromIntegral (size l + n) + 0.5)
+                / fromIntegral (1 + size dataPoints)
+            )
+      FingerTree.OnLeft ->
+        ( CompleteQuantiler (Counted x 1 FingerTree.<| dataPoints),
+          0.5 / fromIntegral (1 + size dataPoints)
+        )
+      _ -> error "CompleteQuantiler quantile: invariant violation"
+    where size = maybe 0 countedNum . FingerTree.measure

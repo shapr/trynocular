@@ -22,6 +22,7 @@ library
                     , Trynocular.Quantiler
                     , Trynocular.TestHarness
     build-depends:    base
+                    , fingertree
                     , hpc
                     , math-functions
                     , random
