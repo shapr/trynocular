@@ -89,10 +89,11 @@ is no point in updating nodes lower than that one.
 ```
 
 Currently, this key is chosen with a 12.5% probability.  We will observe the
-*additional* coverage obtained by testing with this key.  If it is more than
-we have seen when testing with other keys, then we want to increase the
-probability of generating keys similar to this one, since it reaches lots of
-previously untested code.  If it is less than we have typically seen, though,
+test and determine its *benefit*  (The current idea is to base the benefit on
+code coverage from hpc, but this calculation makes no assumptions about the
+nature of the benefit.)  If the benefit is greater than we have seen when
+testing with other keys, then we want to increase the probability of generating
+keys similar to this one.  If it is less than we have typically seen, though,
 then we want to decrease the probability of generating keys like this one.
 
 # Choosing a new target probability for a key
@@ -101,60 +102,64 @@ Bayes' Law tells us that for any events A and B, P(A) * P(B|A) = P(B) * P(A|B).
 Consider the following events for a test with a random key:
 
 * A = a test uses the observed `PartialKey`
-* B = a test yields at least the observed additional coverage
+* B = a test yields at least the observed benefit
 
-We take P(B|A) to be 50% by assumption.  Although we observed the coverage and
-know its exact value, it's right on the line and it makes sense to assign half
+We take P(B|A) to be 50% by assumption.  Although we observed the benefit and
+know its exact value, it is right on the line and it makes sense to assign half
 credit to preserve continuity.
 
 P(A) is computed exactly as the product of the prior probabilities associated
-with all choice nodes of the `Generator` that the key passes through.
+with all choice nodes of the `Generator` that were forced by the test.
 
-P(B|~A) is estimated by comparing the observed additional coverage with previous
-observations.  Techniques vary here, anywhere from storing the entire set of
-past observations to summarizing the distribution with an exponentially weighted
-moving average.  Whatever the mechanism for estimating P(B|~A), P(B) is then
-calculated easily: P(B) = P(A) * P(B|A) + (1 - P(A)) * P(B|~A).
+P(B|~A) is estimated by comparing the observed benefit with typical benefit.
+The `Quantiler` class abstracts over various techniques for estimating this
+probability.  It can be done with statistical methods (e.g., exponentially
+weighted moving average) or by storing the entire set of past benefits.
+Whatever the method for estimating P(B|~A), P(B) is then calculated easily:
+P(B) = P(A) * P(B|A) + (1 - P(A)) * P(B|~A).
 
 Applying Bayes' Law, we can now estimate P(A|B), the conditional probability of
-using the observed key given that a test yields at least the given coverage.
+using the observed key given that a test yields at least the observed benefit.
 In a perfect world, we would adjust the `Generator` so that it generates the
 observed `PartialKey` with this probability (and therefore other similar values
-more often as well).  However, because the chosen value for P(B) was only an
-estimate, it behooves us to be more careful, and simply adjust in the direction
-of this target probability by some configurable step size.
+more or less often as well).  However, because the chosen value for P(B) was
+only an estimate, it behooves us to be more careful, and simply adjust in the
+direction of this target probability by some configurable step size.
 
-For example, suppose we compute P(B|~A) from a z-score, and the z-score is 0.5.
-Then:
-
-* P(B|A) = 50%
-* P(A) = 0.5 * 0.5 * 0.5 = 12.5%
-* P(B|~A) = 30.85%
-* P(B) = 0.125 * 0.5 + 0.875 * 0.3085 = 33.24%
-* P(A|B) = 0.5 * 0.125 / 0.3324 = 18.80%
-
-On the other hand, if the z-score is -0.5, then:
+For example, using the key above with a prior probability of 12.5%. suppose we
+estimate P(B|~A) = 30%.  This was an above average example.  Then:
 
 * P(B|A) = 50%
 * P(A) = 0.5 * 0.5 * 0.5 = 12.5%
-* P(B|~A) = 69.15%
-* P(B) = 0.125 * 0.5 + 0.875 * 0.6915 = 66.76%
-* P(A|B) = 0.5 * 0.125 / 0.6676 = 9.36%
+* P(B|~A) = 30%
+* P(B) = 0.125 * 0.5 + 0.875 * 0.3 = 32.5%
+* P(A|B) = 0.5 * 0.125 / 0.325 = 19.23%
 
-Now suppose the z-score is 2.5, so this was a phenomenal example.  Now:
+As expected, the probability of this key was increased to reflect that it does
+better than the previous average.  On the other hand, if we estimate P(B|~A) =
+70%, making this a below average key, then:
 
 * P(B|A) = 50%
 * P(A) = 0.5 * 0.5 * 0.5 = 12.5%
-* P(B|~A) = 0.6210%
-* P(B) = 0.125 * 0.5 + 0.875 * 0.006210 = 6.79%
-* P(A|B) = 0.5 * 0.125 / 0.0679 = 92.05%
+* P(B|~A) = 70%
+* P(B) = 0.125 * 0.5 + 0.875 * 0.7 = 67.5%
+* P(A|B) = 0.5 * 0.125 / 0.675 = 9.26%
 
-Do we really want a 92% chance of choosing this specific key?  No!  In fact,
+The below average key had its probability decreased.  Finally, suppose the
+observed benefit is remarkably high, so P(B|~A) is only 1%.  Now:
+
+* P(B|A) = 50%
+* P(A) = 0.5 * 0.5 * 0.5 = 12.5%
+* P(B|~A) = 1%
+* P(B) = 0.125 * 0.5 + 0.875 * 0.01 = 7.125%
+* P(A|B) = 0.5 * 0.125 / 0.07125 = 87.72%
+
+Do we really want an 88% chance of choosing this specific key?  No!  In fact,
 this would just result in choosing the same key over and over again, and the
 test harness would skip these redundant tests.  The issue here is that when
 P(B|~A) is extreme, it's more likely that the estimate of P(B|~A) is wrong than
-that the chosen key is that promising.  This illustrates why we might choose a
-smaller step size to move in the direction of the target probability without
+that the chosen key is really that great.  This illustrates why we might choose
+a smaller step size to move in the direction of the target probability without
 stepping all the way there in a single iteration.
 
 # How to adjust the target key probability
@@ -180,52 +185,47 @@ the `p_Left` value at each individual node of the tree.  There are, of course,
 many ways that we could change these three probabilities so that they have the
 desired product.  Which shall we choose?
 
-More generally, at any `Choice` or `Both` node of a `Generator`, there are two
-probabilities that can be multiplied together to obtain the probability of
-choosing any given key.  At a `Choice` node, those are the probability of
-choosing the branch that matches the key, and the tail probability *after*
-the choice.  At a `Both` node, these are the respective tail probabilities of
-choosing the correct left and right halves of the key, and these probabilities
-are multiplied because the choices are made independently.  The third relevant
-node type is a `Trivial` node, in which case the correct key is generated with
-100% probability.  Any node for which the partial key is not defined is also
-treated as a `Trivial` node.
+We seek to make the desired adjustment by changing the probabilities of only
+those `Choice` nodes in the generator that were reached by the given test.
+(Notably, a `Choice` node is reached if and only if it appears in the generated
+`PartialKey`.  A node that was reached to generate the total test input, but
+whose choice was never observed by the test itself, should not be adjusted.)
+The overall probability of the key is the product of the probabilities of making
+the observed choice at all of those choice nodes.  Thus, we decompose the
+probability into `p = p_1 * p_2 * ... * p_n`, where `p_i` is the probability
+of making the choice at the `i`th `Choice` node.  We can only directly modify
+the various `p_i` to have the desired cumulative effect on `p`.
 
-We can reason from the extremal case.  If we'd like to adjust the probability to
-be 1, then clearly both of the constituent probabilities must both become 1 as
-well.  So given an initial probability `p * q`, we want to multiply it by
-`k = 1 / (p * q)`.  We must multiply `p` by `1 / p`, which is
-`k ^ (log p / log (p * q))`, while we multiply `q` by `1 / q`, which is
-`k ^ (log q / log (p * q))`.  We can check that these exponents for `k` work in
-general, except for the case where `p` and `q` are both 100%.  We treat that
-case as impossible.  (For example, we cannot adjust the probability of
-`BothF TrivialF TrivialF`!)
+We can reason from the extremal case to see how to do this.  If we wanted
+`p = 1` (multiplying it by a factor of `k = 1 / p`), then clearly all `p_i` must
+be changed to 1 as well.  Then `p_1` should be multiplied by `1 / p_1`, which is
+`k ^ (log p_1 / log p)`, and `p_2` should be multiplied by `1 / p_2`, which is
+`k ^ (log p_2 / log p)`, and so on.  Back in the general case, we can check that
+these same exponents still work to multiply `p` by an arbitrary factor `k`, so
+long as `p` is strictly between 0 and 1.
+
+(If `p = 0`, then it's impossible that we observed this key at all, so we can
+dispense with this case.  If `p = 1`, then we will not adjust the probability.
+In practice, this means that the test never observed the result of a
+non-trivial `Choice` node at all.  We treat `Choice` nodes with a probability
+equal to 1 as trivial.  The approach described here ignores them, since the log
+of their probability is 0.)
 
 In the example above, the probability of the key is 12.5%.  Suppose we want to
-adjust it to 25%, so `k = 2`.  Then at the top node, we compute (using base 2
-logarithms for easier math, but it doesn't matter in the end):
+adjust it to 25%, so `k = 2`.  Then we have:
 
-* `p = 0.5` and `q = 0.25`
-* `p' = p * k ^ (log p / log (p * q)) = 0.5 * 2 ^ (1/3)`
-* `q' = q * k ^ (log q / log (p * q)) = 0.25 * 2 ^ (2/3)`
+* `p_1 = p_2 = p_3 = 0.5`
+* `log p = -3`, while `log p_1 = log p_2 = log p_3 = -1`.
+* All three `Choice` nodes have their selected direction multiplied by
+  `2 ^ (1/3)`, the cube root of 2.
+* The resulting combined probability is multiplied by 2 as a result.
 
-We can update `p` immediately.  To adjust `q`, though, we must recursively
-update the subtree below the `Choice` node.  Now `k = 2 ^ (2/3)`, and we compute
-the following for the middle node.
+On the other hand, suppose the three nodes had probabilities of `0.1`, `0.2`,
+and `0.3`.  Then `p = 0.1 * 0.2 * 0.3 = 0.006`.  Now if we wanted to multiply
+its probability by `k`, we would have:
 
-* `p = 0.5` and `q = 0.5`
-* `p' = p * k ^ (log p / log (p * q)) = 0.5 * 2 ^ (1/3)`
-* `q' = q * k ^ (log q / log (p * q)) = 0.5 * 2 ^ (1/3)`
-
-Again, we may update `p` directly in the node, but we must recursively update
-the subtree below the `Choice` node.  Now `k = 2 ^ (1/3)`, and we compute the
-following for the bottom node.
-
-* `p = 0.5` and `q = 1`
-* `p' = p * k ^ (log p / log (p * q)) = 0.5 * 2 ^ (1/3)`
-* `q' = q * k ^ (log q / log (p * q)) = 1`
-
-Effectively, in this case, we have multiplied all three probabilities in the key
-by `2 ^ (1/3)`, which had the effect of doubling the probability of the key.
-However, had the original probabilities not been equal, the adjustment would
-have been allocated differently.
+* `log p ≈ -7.38`, `log p_1 ≈ -3.32`, `log p_2 ≈ -2.32`, and `log p_3 ≈ -1.74`
+* `p_1` is multiplied by `k ^ 0.45`
+* `p_2` is multiplied by `k ^ 0.31`
+* `p_3` is multiplied by `k ^ 0.24`
+* These exponents sum to 1, so the combined probability is multiplied by `k`.
