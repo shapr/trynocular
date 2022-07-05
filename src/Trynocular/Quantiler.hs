@@ -31,10 +31,11 @@ instance Quantiler NormalQuantiler where
   quantile (NormalQuantiler mean variance responsiveness) x =
     (NormalQuantiler mean' variance' responsiveness, erfc (zscore / sqrt 2) / 2)
     where
-      zscore = (x - mean) / sqrt variance
       mean' = responsiveness * x + (1 - responsiveness) * mean
       xvar = (x - mean) ^ (2 :: Int)
       variance' = responsiveness * xvar + (1 - responsiveness) * variance
+
+      zscore = (x - mean') / sqrt variance'
 
 normalQuantiler :: Double -> Double -> Double -> NormalQuantiler
 normalQuantiler = NormalQuantiler
@@ -54,17 +55,17 @@ instance Quantiler BetaQuantiler where
     where
       scaled = (x - low) / (high - low)
 
-      alpha = ((1 - mean) / variance - 1 / mean) * mean * mean
-      beta = alpha * (1 / mean - 1)
+      mean' = responsiveness * scaled + (1 - responsiveness) * mean
+      xvar = (scaled - mean) ^ (2 :: Int)
+      variance' = responsiveness * xvar + (1 - responsiveness) * variance
+
+      alpha = ((1 - mean') / variance' - 1 / mean') * mean' * mean'
+      beta = alpha * (1 / mean' - 1)
 
       result
         | scaled < 0 = 0
         | scaled > 1 = 1
         | otherwise = 1 - incompleteBeta alpha beta scaled
-
-      mean' = responsiveness * scaled + (1 - responsiveness) * mean
-      xvar = (scaled - mean) ^ (2 :: Int)
-      variance' = responsiveness * xvar + (1 - responsiveness) * variance
 
 betaQuantiler :: (Double, Double) -> Double -> Double -> Double -> BetaQuantiler
 betaQuantiler (low, high) mean variance responsiveness =
