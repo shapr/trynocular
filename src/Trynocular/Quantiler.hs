@@ -28,6 +28,7 @@ data NormalQuantiler = NormalQuantiler
 
 instance Quantiler NormalQuantiler where
   type Datum NormalQuantiler = Double
+
   quantile (NormalQuantiler mean variance responsiveness) x =
     (NormalQuantiler mean' variance' responsiveness, erfc (zscore / sqrt 2) / 2)
     where
@@ -50,6 +51,7 @@ data BetaQuantiler = BetaQuantiler
 
 instance Quantiler BetaQuantiler where
   type Datum BetaQuantiler = Double
+
   quantile (BetaQuantiler low high mean variance responsiveness) x =
     (BetaQuantiler low high mean' variance' responsiveness, result)
     where
@@ -95,6 +97,7 @@ emptyCompleteQuantiler = CompleteQuantiler FingerTree.empty
 
 instance Ord a => Quantiler (CompleteQuantiler a) where
   type Datum (CompleteQuantiler a) = a
+
   quantile (CompleteQuantiler dataPoints) x =
     case FingerTree.search
       (\_ r -> fromMaybe True ((<) <$> Just x <*> fmap countedVal r))
