@@ -1,12 +1,18 @@
+# Problem overview
+
 For a given test case, we have a `Generator` and a `PartialKey`.
 
-- The `Generator` is a tree of decisions.  However, unlike a traditional decision tree, it has `Choice` nodes where only one branch is taken, and also `Both` nodes, where both branches are taken.
+- The `Generator` is a tree of decisions.  However, unlike a traditional
+  decision tree, it has `Choice` nodes where only one branch is taken, and also
+  `Both` nodes, where both branches are taken.
 
-- The `PartialKey` is a record of the path through the tree.  At `Choice` nodes it records left or right.  At `Both` nodes, it splits into two paths: one for each subtree.
+- The `PartialKey` is a record of the path through the tree.  At `Choice` nodes
+  it records left or right.  At `Both` nodes, it splits into two paths: one for
+  each subtree.
 
-Example:
+For example, a generator for the type `Either ((), Bool) ()` would look like
+this:
 
-The generator is:
 ```
                                     Choice
                                    /      \
@@ -23,7 +29,7 @@ The generator is:
                               Trivial  Trivial
 ```
 
-These are the three possible keys:
+These are the three possible total `Key`s:
 
 ```
                                     LeftF
@@ -62,18 +68,12 @@ These are the three possible keys:
                                           \
                                            \
                                             \
-                                          Trivial
+                                          TrivialF
 ```
 
-What we know is the value we got from a test case, given the choice of key. What we want to know is the right key probabilities to optimize the expected value of future generated keys.  This is vaguely Bayesian in nature.  How do we make it more like a Bayesian probability question?
-
-P(B|A) = P(A|B) * P(B) / P(A)
-
-Turning the score into a probability.
-
-If we know the mean and variance of a distribution for an arbitrary key.  And we know that this particular key scored x stddevs above the mean.
-
-We can compute P of scoring at most `score` stddevs above the mean.  If this probability is > 50%, we want the distribution to be less like this key.  If less than 50%, we want the distribution to be more like this key.
+Consider this hypothetical key.  The node labeled "-" is the point at which the
+key was no longer demanded, so this is essentially the leaf of the path.  There
+is no point in updating nodes lower than that one.
 
 ```
                                   o            p_Left = 50%
@@ -86,62 +86,146 @@ We can compute P of scoring at most `score` stddevs above the mean.  If this pro
                                  /
                                 /
                                -
-                              / \
-                            ... ...
 ```
 
-A = we chose this key
-B = we scored this well
+Currently, this key is chosen with a 12.5% probability.  We will observe the
+*additional* coverage obtained by testing with this key.  If it is more than
+we have seen when testing with other keys, then we want to increase the
+probability of generating keys similar to this one, since it reaches lots of
+previously untested code.  If it is less than we have typically seen, though,
+then we want to decrease the probability of generating keys like this one.
 
-P(we scored this well | we chose this key) =
-    P(we chose this key | we scored this well)
-    * P(we scored this well)
-    / P(we chose this key)
+# Choosing a new target probability for a key
 
-To an approximation (assuming some jitter in measurement):
+Bayes' Law tells us that for any events A and B, P(A) * P(B|A) = P(B) * P(A|B).
+Consider the following events for a test with a random key:
 
-P(we scored at least this well | we chose this key) = 50%
-P(we scored at least this well) is computed from score.
-P(we chose this key) = product of the probabilities of all the choice nodes in the path.
+* A = a test uses the observed `PartialKey`
+* B = a test yields at least the observed additional coverage
 
-We can compute P(we chose this key | we scored at least this well)
+We take P(B|A) to be 50% by assumption.  Although we observed the coverage and
+know its exact value, it's right on the line and it makes sense to assign half
+credit to preserve continuity.
 
-P(we chose this key | we scored this well) =
-    P(we scored this well | we chose this key)
-    * P(we chose this key)
-    / P(we scored this well) =
+P(A) is computed exactly as the product of the prior probabilities associated
+with all choice nodes of the `Generator` that the key passes through.
 
+P(B|~A) is estimated by comparing the observed additional coverage with previous
+observations.  Techniques vary here, anywhere from storing the entire set of
+past observations to summarizing the distribution with an exponentially weighted
+moving average.  Whatever the mechanism for estimating P(B|~A), P(B) is then
+calculated easily: P(B) = P(A) * P(B|A) + (1 - P(A)) * P(B|~A).
 
-In the example, if score = 0.5, then:
+Applying Bayes' Law, we can now estimate P(A|B), the conditional probability of
+using the observed key given that a test yields at least the given coverage.
+In a perfect world, we would adjust the `Generator` so that it generates the
+observed `PartialKey` with this probability (and therefore other similar values
+more often as well).  However, because the chosen value for P(B) was only an
+estimate, it behooves us to be more careful, and simply adjust in the direction
+of this target probability by some configurable step size.
 
-P(we scored this well | we chose this key) = 50%
-P(we chose this key) = 0.5 * 0.5 * 0.5 = 12.5%
-P(we scored this well) = 30.8538%
-P(we chose this key | we scored this well) = 0.5 * 0.125 / 0.308538 = 20.26%
+For example, suppose we compute P(B|~A) from a z-score, and the z-score is 0.5.
+Then:
 
-On the other hand, if score = -0.5, then:
+* P(B|A) = 50%
+* P(A) = 0.5 * 0.5 * 0.5 = 12.5%
+* P(B|~A) = 30.85%
+* P(B) = 0.125 * 0.5 + 0.875 * 0.3085 = 33.24%
+* P(A|B) = 0.5 * 0.125 / 0.3324 = 18.80%
 
-P(we scored this well | we chose this key) = 50%
-P(we chose this key) = 0.5 * 0.5 * 0.5 = 12.5%
-P(we scored this well) = 69.1462%
-P(we chose this key | we scored this well) = 0.5 * 0.125 / 0.691462 = 9.04%
+On the other hand, if the z-score is -0.5, then:
 
-Once we know the new and old probability of choosing this key, we can compute their ratio, and then count the number of choices made in the key.  Take that root of the ratio, and multiply the probability at each choice node by that root.  For example, in the score = -0.5 case, we want to update P(key) from 12.5% to 9.04%, which is a factor of 0.7232.  There are three choices in the key, so the cube root of 0.7232 is 0.8976.  We should multiply each choice node by that factor.
+* P(B|A) = 50%
+* P(A) = 0.5 * 0.5 * 0.5 = 12.5%
+* P(B|~A) = 69.15%
+* P(B) = 0.125 * 0.5 + 0.875 * 0.6915 = 66.76%
+* P(A|B) = 0.5 * 0.125 / 0.6676 = 9.36%
 
-Specifically: when we went left, we should multiply p_Left by 0.8976.  When we went right, we should multiply p_Right by 0.8976.  But since the code only stores p_Left, then p_Left,new = 1 - p_Right,new = 1 - 0.8976 * p_Right,old =
-1 - 0.8976 * (1 - p_Left,old).
+Now suppose the z-score is 2.5, so this was a phenomenal example.  Now:
 
-Revisiting the problem case:
+* P(B|A) = 50%
+* P(A) = 0.5 * 0.5 * 0.5 = 12.5%
+* P(B|~A) = 0.6210%
+* P(B) = 0.125 * 0.5 + 0.875 * 0.006210 = 6.79%
+* P(A|B) = 0.5 * 0.125 / 0.0679 = 92.05%
 
-Suppose score = 2.5.  We did really well!  Yay!  Now:
+Do we really want a 92% chance of choosing this specific key?  No!  In fact,
+this would just result in choosing the same key over and over again, and the
+test harness would skip these redundant tests.  The issue here is that when
+P(B|~A) is extreme, it's more likely that the estimate of P(B|~A) is wrong than
+that the chosen key is that promising.  This illustrates why we might choose a
+smaller step size to move in the direction of the target probability without
+stepping all the way there in a single iteration.
 
-P(we scored this well | we chose this key) = 50%
-P(we chose this key) = 0.5 * 0.5 * 0.5 = 12.5%
-P(we scored this well) = 0.6210%
-P(we chose this key | we scored this well) = 0.5 * 0.125 / 0.006210 = 1006.44%
+# How to adjust the target key probability
 
-Do we really want a 1000% chance of choosing this key?  NO!  In fact, if we had a 100% chance of choosing this key, then our test harness would stall forever because it never chooses a unique key.
+Recall the example key from above.
 
-The issue here is that P(we scored this well) is wrong.  In fact, it MUST be at least half of P(we chose this key).  But even so, we never want to choose a probability of 100% because we're not sure of P(we scored this well), so 100% is too extreme.  So maybe we have a weighting factor that discounts the new observation and just moves partially in that direction.
+```
+                                  o            p_Left = 50%
+                                 /
+                                /
+                               o               p_Left = 50%
+                                \
+                                 \
+                                  o            p_Left = 50%
+                                 /
+                                /
+                               -
+```
 
-Other possibility: When we choose a key that has already been used, decrease the probabilities for that key by a slight amount to prevent spinning forever just looking for a unique key.
+The probability of choosing this key is 12.5%.  Suppose we want to adjust that
+probability to a new target, such as 20%.  We must accomplish this by adjusting
+the `p_Left` value at each individual node of the tree.  There are, of course,
+many ways that we could change these three probabilities so that they have the
+desired product.  Which shall we choose?
+
+More generally, at any `Choice` or `Both` node of a `Generator`, there are two
+probabilities that can be multiplied together to obtain the probability of
+choosing any given key.  At a `Choice` node, those are the probability of
+choosing the branch that matches the key, and the tail probability *after*
+the choice.  At a `Both` node, these are the respective tail probabilities of
+choosing the correct left and right halves of the key, and these probabilities
+are multiplied because the choices are made independently.  The third relevant
+node type is a `Trivial` node, in which case the correct key is generated with
+100% probability.  Any node for which the partial key is not defined is also
+treated as a `Trivial` node.
+
+We can reason from the extremal case.  If we'd like to adjust the probability to
+be 1, then clearly both of the constituent probabilities must both become 1 as
+well.  So given an initial probability `p * q`, we want to multiply it by
+`k = 1 / (p * q)`.  We must multiply `p` by `1 / p`, which is
+`k ^ (log p / log (p * q))`, while we multiply `q` by `1 / q`, which is
+`k ^ (log q / log (p * q))`.  We can check that these exponents for `k` work in
+general, except for the case where `p` and `q` are both 100%.  We treat that
+case as impossible.  (For example, we cannot adjust the probability of
+`BothF TrivialF TrivialF`!)
+
+In the example above, the probability of the key is 12.5%.  Suppose we want to
+adjust it to 25%, so `k = 2`.  Then at the top node, we compute (using base 2
+logarithms for easier math, but it doesn't matter in the end):
+
+* `p = 0.5` and `q = 0.25`
+* `p' = p * k ^ (log p / log (p * q)) = 0.5 * 2 ^ (1/3)`
+* `q' = q * k ^ (log q / log (p * q)) = 0.25 * 2 ^ (2/3)`
+
+We can update `p` immediately.  To adjust `q`, though, we must recursively
+update the subtree below the `Choice` node.  Now `k = 2 ^ (2/3)`, and we compute
+the following for the middle node.
+
+* `p = 0.5` and `q = 0.5`
+* `p' = p * k ^ (log p / log (p * q)) = 0.5 * 2 ^ (1/3)`
+* `q' = q * k ^ (log q / log (p * q)) = 0.5 * 2 ^ (1/3)`
+
+Again, we may update `p` directly in the node, but we must recursively update
+the subtree below the `Choice` node.  Now `k = 2 ^ (1/3)`, and we compute the
+following for the bottom node.
+
+* `p = 0.5` and `q = 1`
+* `p' = p * k ^ (log p / log (p * q)) = 0.5 * 2 ^ (1/3)`
+* `q' = q * k ^ (log q / log (p * q)) = 1`
+
+Effectively, in this case, we have multiplied all three probabilities in the key
+by `2 ^ (1/3)`, which had the effect of doubling the probability of the key.
+However, had the original probabilities not been equal, the adjustment would
+have been allocated differently.
