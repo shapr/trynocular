@@ -19,12 +19,14 @@ library
                     , Trynocular.Generator
                     , Trynocular.Key
                     , Trynocular.PartialKeySet
+                    , Trynocular.Quantiler
                     , Trynocular.TestHarness
     build-depends:    base
+                    , hpc
+                    , math-functions
                     , random
                     , semigroupoids
                     , universe-base
-                    , hpc
     hs-source-dirs:   src
     default-language: GHC2021
     ghc-options:      -Wall
