@@ -11,10 +11,10 @@ import Trynocular.Generator
     pickKey,
   )
 import Trynocular.Key (PartialKey, spy)
-import Trynocular.Quantiler
-  ( CompleteQuantiler,
-    Quantiler (..),
-    emptyCompleteQuantiler,
+import Trynocular.Standardizer
+  ( CompleteStandardizer,
+    Standardizer (..),
+    emptyCompleteStandardizer,
   )
 
 data TestState
@@ -23,7 +23,7 @@ data TestState
       Int
       (Generator params)
       (params -> IO ())
-      (CompleteQuantiler Int)
+      (CompleteStandardizer Int)
 
 initialTestState ::
   forall params.
@@ -35,7 +35,7 @@ initialTestState generator action =
     0
     generator
     action
-    (emptyCompleteQuantiler 0.1)
+    (emptyCompleteStandardizer 0.1)
 
 updateGenerator ::
   -- | quantile for the benefit
@@ -46,11 +46,11 @@ updateGenerator ::
   Generator a ->
   -- | new updated generator
   Generator a
-updateGenerator percentile pkey gen = adjustProbability pkey targetKeyProb gen
+updateGenerator pct pkey gen = adjustProbability pkey targetKeyProb gen
   where
     priorKeyProb = keyProbability gen pkey
     priorBenefitProb =
-      priorKeyProb * 0.5 + (1 - priorKeyProb) * (1 - percentile)
+      priorKeyProb * 0.5 + (1 - priorKeyProb) * (1 - pct)
     idealKeyProb = 0.5 * priorKeyProb / priorBenefitProb
     targetKeyProb = (priorKeyProb + idealKeyProb) / 2
 
@@ -59,8 +59,8 @@ testHarness (TestState n generator action coverage) = do
   key <- pickKey generator
   (pkey, ((), observedCoverage)) <-
     spy key (observeCoverage . action . fromKey generator)
-  let (coverage', coverageQuantile) = quantile coverage observedCoverage
-  let generator' = updateGenerator coverageQuantile pkey generator
+  let (coverage', coveragePct) = percentile coverage observedCoverage
+  let generator' = updateGenerator coveragePct pkey generator
   let state' = TestState (n + 1) generator' action coverage'
   when (shouldContinue state') $ testHarness state'
 

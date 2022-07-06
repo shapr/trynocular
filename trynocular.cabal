@@ -19,7 +19,7 @@ library
                     , Trynocular.Generator
                     , Trynocular.Key
                     , Trynocular.PartialKeySet
-                    , Trynocular.Quantiler
+                    , Trynocular.Standardizer
                     , Trynocular.TestHarness
     build-depends:    base
                     , fingertree

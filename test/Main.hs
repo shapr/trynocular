@@ -12,14 +12,54 @@ import Data.Word (Word8)
 import GHC.Generics (Generic)
 import System.Random (mkStdGen)
 import System.Random.Shuffle (shuffle')
-import Test.Hspec (Spec, describe, example, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
+import Test.Hspec
+  ( Spec,
+    describe,
+    example,
+    hspec,
+    it,
+    shouldBe,
+    shouldReturn,
+    shouldSatisfy,
+  )
 import Test.Hspec.QuickCheck (prop)
-import Test.QuickCheck (Arbitrary (..), Gen, choose, elements, forAll, genericShrink, listOf, oneof, (===), (==>))
+import Test.QuickCheck
+  ( Arbitrary (..),
+    Gen,
+    choose,
+    elements,
+    forAll,
+    genericShrink,
+    listOf,
+    oneof,
+    (===),
+    (==>),
+  )
 import Trynocular.Generable (Generable (..))
-import Trynocular.Generator (Generator, adjustProbability, fromKey, keyProbability, keys, values)
-import Trynocular.Key (Key, KeyF (..), PartialKey, partialKeys, spy, subsumes, totalKey)
+import Trynocular.Generator
+  ( Generator,
+    adjustProbability,
+    fromKey,
+    keyProbability,
+    keys,
+    values,
+  )
+import Trynocular.Key
+  ( Key,
+    KeyF (..),
+    PartialKey,
+    partialKeys,
+    spy,
+    subsumes,
+    totalKey,
+  )
 import Trynocular.PartialKeySet qualified as PartialKeySet
-import Trynocular.Quantiler (Quantiler (..), betaQuantiler, emptyCompleteQuantiler, normalQuantiler)
+import Trynocular.Standardizer
+  ( Standardizer (..),
+    betaStandardizer,
+    emptyCompleteStandardizer,
+    normalStandardizer,
+  )
 import Trynocular.TestHarness (smartCheck)
 
 data Foo
@@ -393,57 +433,57 @@ partialKeySetSpec = do
             k `PartialKeySet.member` PartialKeySet.fromList (totalKey <$> ks)
               === (k `elem` ks)
 
-quantilerSpec :: Spec
-quantilerSpec = do
-  describe "NormalQuantiler" $ do
+standardizerSpec :: Spec
+standardizerSpec = do
+  describe "NormalStandardizer" $ do
     it "estimates normal distributions based on z score" $ do
-      -- Responsiveness of 0 ensures the distribution isn't updated.
-      let standardQuantiler = normalQuantiler 0 1 0
+      -- Responsiveness of 0 ensures the dinitialStandardizeristribution isn't updated.
+      let standardizer = normalStandardizer 0 1 0
 
-      snd (quantile standardQuantiler 0) `shouldBe` 0.5
-      snd (quantile standardQuantiler 1) `shouldBe` 0.8413447460685429
-      snd (quantile standardQuantiler (-1)) `shouldBe` 0.15865525393145707
+      snd (percentile standardizer 0) `shouldBe` 0.5
+      snd (percentile standardizer 1) `shouldBe` 0.8413447460685429
+      snd (percentile standardizer (-1)) `shouldBe` 0.15865525393145707
 
-  describe "BetaQuantiler" $ do
+  describe "BetaStandardizer" $ do
     it "estimates a uniform distribution" $ do
       -- Uniform distribution has a variance of 1/12.
       -- Responsiveness of 0 ensures the distribution isn't updated.
-      let uniformQuantiler = betaQuantiler (0, 1) 0.5 (1 / 12) 0
-      snd (quantile uniformQuantiler 0.00) `shouldBe` 0.00
-      snd (quantile uniformQuantiler 0.25) `shouldBe` 0.25
-      snd (quantile uniformQuantiler 0.50) `shouldBe` 0.50
-      snd (quantile uniformQuantiler 0.75) `shouldBe` 0.75
-      snd (quantile uniformQuantiler 1.00) `shouldBe` 1.00
+      let standardizer = betaStandardizer (0, 1) 0.5 (1 / 12) 0
+      snd (percentile standardizer 0.00) `shouldBe` 0.00
+      snd (percentile standardizer 0.25) `shouldBe` 0.25
+      snd (percentile standardizer 0.50) `shouldBe` 0.50
+      snd (percentile standardizer 0.75) `shouldBe` 0.75
+      snd (percentile standardizer 1.00) `shouldBe` 1.00
 
     it "learns non-zero discrete component at the bottom" $ do
-      let initialQuantiler = betaQuantiler (0, 1) 0.5 (1 / 12) 0.1
-          trainedQuantiler =
-            foldl' ((fst .) . quantile) initialQuantiler (replicate 100 0)
-      abs (snd (quantile trainedQuantiler 0) - 0.5) `shouldSatisfy` (< 0.001)
+      let initialStandardizer = betaStandardizer (0, 1) 0.5 (1 / 12) 0.1
+          trainedStandardizer =
+            foldl' ((fst .) . percentile) initialStandardizer (replicate 100 0)
+      abs (snd (percentile trainedStandardizer 0) - 0.5) `shouldSatisfy` (< 0.001)
 
     it "learns non-zero discrete component at the top" $ do
-      let initialQuantiler = betaQuantiler (0, 1) 0.5 (1 / 12) 0.1
-          trainedQuantiler =
-            foldl' ((fst .) . quantile) initialQuantiler (replicate 100 1)
-      abs (snd (quantile trainedQuantiler 1) - 0.5) `shouldSatisfy` (< 0.001)
+      let initialStandardizer = betaStandardizer (0, 1) 0.5 (1 / 12) 0.1
+          trainedStandardizer =
+            foldl' ((fst .) . percentile) initialStandardizer (replicate 100 1)
+      abs (snd (percentile trainedStandardizer 1) - 0.5) `shouldSatisfy` (< 0.001)
 
-  describe "CompleteQuantiler" $ do
+  describe "CompleteStandardizer" $ do
     it "approximates a uniform distribution" $
       example $ do
         let input = shuffle' [1 :: Int .. 10000] 10000 (mkStdGen 123)
-            quantiler =
+            standardizer =
               foldl'
-                (\q x -> fst (quantile q x))
-                (emptyCompleteQuantiler 0.05)
+                (\s x -> fst (percentile s x))
+                (emptyCompleteStandardizer 0.05)
                 input
 
         -- Accuracy isn't great here, both because the test modifies the
         -- distribution and because we're not generating a lot of values.
-        abs (snd (quantile quantiler 0) - 0.00) `shouldSatisfy` (< 0.1)
-        abs (snd (quantile quantiler 2500) - 0.25) `shouldSatisfy` (< 0.1)
-        abs (snd (quantile quantiler 5000) - 0.50) `shouldSatisfy` (< 0.1)
-        abs (snd (quantile quantiler 7500) - 0.75) `shouldSatisfy` (< 0.1)
-        abs (snd (quantile quantiler 10000) - 1.00) `shouldSatisfy` (< 0.1)
+        abs (snd (percentile standardizer 0) - 0.00) `shouldSatisfy` (< 0.1)
+        abs (snd (percentile standardizer 2500) - 0.25) `shouldSatisfy` (< 0.1)
+        abs (snd (percentile standardizer 5000) - 0.50) `shouldSatisfy` (< 0.1)
+        abs (snd (percentile standardizer 7500) - 0.75) `shouldSatisfy` (< 0.1)
+        abs (snd (percentile standardizer 10000) - 1.00) `shouldSatisfy` (< 0.1)
 
 testHarnessSpec :: Spec
 testHarnessSpec = do
@@ -456,5 +496,5 @@ main = hspec $ do
   describe "Generator" generatorSpec
   describe "spy" spySpec
   describe "PartialKeySet" partialKeySetSpec
-  describe "Quantiler" quantilerSpec
+  describe "Standardizer" standardizerSpec
   describe "TestHarness" testHarnessSpec
