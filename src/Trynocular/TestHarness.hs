@@ -11,8 +11,6 @@ import Trynocular.Generator
     pickKey,
   )
 import Trynocular.Key (PartialKey, spy)
-import Trynocular.PartialKeySet (PartialKeySet)
-import Trynocular.PartialKeySet qualified as PartialKeySet
 import Trynocular.Quantiler
   ( CompleteQuantiler,
     Quantiler (..),
@@ -25,7 +23,6 @@ data TestState
       Int
       (Generator params)
       (params -> IO ())
-      PartialKeySet
       (CompleteQuantiler Int)
 
 initialTestState ::
@@ -38,7 +35,6 @@ initialTestState generator action =
     0
     generator
     action
-    PartialKeySet.empty
     (emptyCompleteQuantiler 0.1)
 
 updateGenerator ::
@@ -59,21 +55,17 @@ updateGenerator percentile pkey gen = adjustProbability pkey targetKeyProb gen
     targetKeyProb = (priorKeyProb + idealKeyProb) / 2
 
 testHarness :: TestState -> IO ()
-testHarness state@(TestState n generator action usedKeys coverage) = do
+testHarness (TestState n generator action coverage) = do
   key <- pickKey generator
-  if key `PartialKeySet.member` usedKeys
-    then testHarness state
-    else do
-      (pkey, ((), observedCoverage)) <-
-        spy key (observeCoverage . action . fromKey generator)
-      let (coverage', coverageQuantile) = quantile coverage observedCoverage
-      let generator' = updateGenerator coverageQuantile pkey generator
-      let usedKeys' = PartialKeySet.insert pkey usedKeys
-      let state' = TestState (n + 1) generator' action usedKeys' coverage'
-      when (shouldContinue state') $ testHarness state'
+  (pkey, ((), observedCoverage)) <-
+    spy key (observeCoverage . action . fromKey generator)
+  let (coverage', coverageQuantile) = quantile coverage observedCoverage
+  let generator' = updateGenerator coverageQuantile pkey generator
+  let state' = TestState (n + 1) generator' action coverage'
+  when (shouldContinue state') $ testHarness state'
 
 shouldContinue :: TestState -> Bool
-shouldContinue (TestState n _ _ _ _) = n < 1000
+shouldContinue (TestState n _ _ _) = n < 1000
 
 observeCoverage :: IO a -> IO (a, Int)
 observeCoverage a = do
@@ -92,3 +84,6 @@ tixModuleCount (TixModule _ _ _ regions) = sum $ 1 <$ filter (> 0) regions
 -- How many regions were executed at least once for all these modules?
 tixCount :: Tix -> Int
 tixCount (Tix ms) = sum $ map tixModuleCount ms
+
+smartCheck :: Generator params -> (params -> IO ()) -> IO ()
+smartCheck generator action = testHarness (initialTestState generator action)

@@ -14,12 +14,13 @@ import System.Random (mkStdGen)
 import System.Random.Shuffle (shuffle')
 import Test.Hspec (Spec, describe, example, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
 import Test.Hspec.QuickCheck (prop)
-import Test.QuickCheck (Arbitrary (..), Gen, choose, elements, forAll, genericShrink, listOf, oneof, (===))
+import Test.QuickCheck (Arbitrary (..), Gen, choose, elements, forAll, genericShrink, listOf, oneof, (===), (==>))
 import Trynocular.Generable (Generable (..))
 import Trynocular.Generator (Generator, adjustProbability, fromKey, keyProbability, keys, values)
 import Trynocular.Key (Key, KeyF (..), PartialKey, partialKeys, spy, subsumes, totalKey)
 import Trynocular.PartialKeySet qualified as PartialKeySet
 import Trynocular.Quantiler (Quantiler (..), betaQuantiler, emptyCompleteQuantiler, normalQuantiler)
+import Trynocular.TestHarness (smartCheck)
 
 data Foo
   = Foo1 String Word
@@ -59,8 +60,9 @@ generatorSpec = do
       forAll (elements (take 100 (keys gen))) $ \tkey ->
         forAll (elements (partialKeys tkey)) $ \pkey ->
           forAll (choose (0, 1)) $ \target ->
-            let p = keyProbability (adjustProbability pkey target gen) pkey
-             in abs (p - target) < 1e-10
+            let p0 = keyProbability gen pkey
+                p = keyProbability (adjustProbability pkey target gen) pkey
+             in p0 < 1 ==> abs (p - target) < 1e-10
 
 spySpec :: Spec
 spySpec = do
@@ -443,9 +445,16 @@ quantilerSpec = do
         abs (snd (quantile quantiler 7500) - 0.75) `shouldSatisfy` (< 0.1)
         abs (snd (quantile quantiler 10000) - 1.00) `shouldSatisfy` (< 0.1)
 
+testHarnessSpec :: Spec
+testHarnessSpec = do
+  it "runs a test" $ do
+    smartCheck ((,) <$> genAny <*> genAny) $ \(xs :: [Int], ys :: [Int]) -> do
+      length (xs ++ ys) `shouldBe` length xs + length ys
+
 main :: IO ()
 main = hspec $ do
   describe "Generator" generatorSpec
   describe "spy" spySpec
   describe "PartialKeySet" partialKeySetSpec
   describe "Quantiler" quantilerSpec
+  describe "TestHarness" testHarnessSpec
