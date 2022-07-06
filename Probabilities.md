@@ -212,7 +212,8 @@ equal to 1 as trivial.  The approach described here ignores them, since the log
 of their probability is 0.)
 
 In the example above, the probability of the key is 12.5%.  Suppose we want to
-adjust it to 25%, so `k = 2`.  Then we have:
+adjust it to 25%, so `k = 2`.  Then using base 2 logarithms for easier math, we
+have:
 
 * `p_1 = p_2 = p_3 = 0.5`
 * `log p = -3`, while `log p_1 = log p_2 = log p_3 = -1`.

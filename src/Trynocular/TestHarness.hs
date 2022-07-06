@@ -3,7 +3,13 @@ module Trynocular.TestHarness where
 import Control.Monad (when)
 import Trace.Hpc.Reflect (examineTix)
 import Trace.Hpc.Tix (Tix (..), TixModule (..))
-import Trynocular.Generator (Generator, fromKey, pickKey)
+import Trynocular.Generator
+  ( Generator,
+    adjustProbability,
+    fromKey,
+    keyProbability,
+    pickKey,
+  )
 import Trynocular.Key (PartialKey, spy)
 import Trynocular.PartialKeySet (PartialKeySet)
 import Trynocular.PartialKeySet qualified as PartialKeySet
@@ -36,7 +42,7 @@ initialTestState generator action =
     (emptyCompleteQuantiler 0.1)
 
 updateGenerator ::
-  -- | quantile for coverage observation
+  -- | quantile for the benefit
   Double ->
   -- | demanded portion of the key
   PartialKey ->
@@ -44,7 +50,13 @@ updateGenerator ::
   Generator a ->
   -- | new updated generator
   Generator a
-updateGenerator _score _pkey gen = gen
+updateGenerator percentile pkey gen = adjustProbability pkey targetKeyProb gen
+  where
+    priorKeyProb = keyProbability gen pkey
+    priorBenefitProb =
+      priorKeyProb * 0.5 + (1 - priorKeyProb) * (1 - percentile)
+    idealKeyProb = 0.5 * priorKeyProb / priorBenefitProb
+    targetKeyProb = (priorKeyProb + idealKeyProb) / 2
 
 testHarness :: TestState -> IO ()
 testHarness state@(TestState n generator action usedKeys coverage) = do
