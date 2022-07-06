@@ -23,6 +23,10 @@ module Trynocular.Generator
     genBoundedIntegral,
     genPositive,
     genNonNegative,
+
+    -- * Adjusting probabilities
+    keyProbability,
+    adjustProbability,
   )
 where
 
@@ -166,3 +170,33 @@ genPositive = (\x b -> 2 * x + b) <$> genNonNegative <*> (pure 1 <!> pure 2)
 -- | A 'Generator' that produces a non-negative 'Integer'.
 genNonNegative :: Generator Integer
 genNonNegative = pure 0 <!> genPositive
+
+-- | Returns the probability of a 'Generator' producing a given 'PartialKey'.
+keyProbability :: Generator a -> PartialKey -> Double
+keyProbability _ Nothing = 1
+keyProbability Trivial (Just TrivialF) = 1
+keyProbability (Choice p g _) (Just (LeftF k)) = p * keyProbability g k
+keyProbability (Choice p _ g) (Just (RightF k)) = (1 - p) * keyProbability g k
+keyProbability (Both ga gb) (Just (BothF a b)) =
+  keyProbability ga a * keyProbability gb b
+keyProbability (Apply _ g) k = keyProbability g k
+keyProbability _ _ = error "key doesn't match generator"
+
+-- | Modifies a 'Generator' to have the given probability of producing the given
+-- 'PartialKey'.
+adjustProbability :: PartialKey -> Double -> Generator a -> Generator a
+adjustProbability key target generator = go key generator
+  where
+    go :: PartialKey -> Generator a -> Generator a
+    go Nothing g = g
+    go (Just TrivialF) Trivial = Trivial
+    go (Just (LeftF k)) (Choice p ga gb) = Choice (adjusted p) (go k ga) gb
+    go (Just (RightF k)) (Choice p ga gb) =
+      Choice (1 - adjusted (1 - p)) ga (go k gb)
+    go (Just (BothF k1 k2)) (Both ga gb) = Both (go k1 ga) (go k2 gb)
+    go (Just k) (Apply f g) = Apply f (go (Just k) g)
+    go _ _ = error "key doesn't match generator"
+
+    prior = keyProbability generator key
+    multiplier = target / prior
+    adjusted p = p * multiplier ** (log p / log prior)

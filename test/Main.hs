@@ -14,9 +14,9 @@ import System.Random (mkStdGen)
 import System.Random.Shuffle (shuffle')
 import Test.Hspec (Spec, describe, example, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
 import Test.Hspec.QuickCheck (prop)
-import Test.QuickCheck (Arbitrary (..), Gen, elements, forAll, genericShrink, listOf, oneof, (===))
+import Test.QuickCheck (Arbitrary (..), Gen, choose, elements, forAll, genericShrink, listOf, oneof, (===))
 import Trynocular.Generable (Generable (..))
-import Trynocular.Generator (Generator, fromKey, keys, values)
+import Trynocular.Generator (Generator, adjustProbability, fromKey, keyProbability, keys, values)
 import Trynocular.Key (Key, KeyF (..), PartialKey, partialKeys, spy, subsumes, totalKey)
 import Trynocular.PartialKeySet qualified as PartialKeySet
 import Trynocular.Quantiler (Quantiler (..), betaQuantiler, emptyCompleteQuantiler, normalQuantiler)
@@ -52,6 +52,15 @@ generatorSpec = do
     any isFoo2 vals `shouldBe` True
     any isFoo3 vals `shouldBe` True
     nub vals `shouldBe` vals
+
+  describe "adjustProbability" $ do
+    prop "reaches the desired probability" $ do
+      let gen = genAny :: Generator [Bool]
+      forAll (elements (take 100 (keys gen))) $ \tkey ->
+        forAll (elements (partialKeys tkey)) $ \pkey ->
+          forAll (choose (0, 1)) $ \target ->
+            let p = keyProbability (adjustProbability pkey target gen) pkey
+             in abs (p - target) < 1e-10
 
 spySpec :: Spec
 spySpec = do

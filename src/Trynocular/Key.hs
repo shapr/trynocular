@@ -14,9 +14,11 @@ module Trynocular.Key
     totalKey,
     partialKeys,
     subsumes,
+    spy,
     GeneralKey,
     KeyF (..),
-    spy,
+    mapSubkeys,
+    traverseSubkeys,
   )
 where
 
