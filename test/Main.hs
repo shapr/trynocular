@@ -5,17 +5,21 @@
 module Main where
 
 import Control.Exception (evaluate)
+import Data.Foldable (foldl')
 import Data.Functor.Identity (Identity (..))
 import Data.List (nub, sort)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
-import Test.Hspec (Spec, describe, hspec, it, shouldBe, shouldReturn)
+import System.Random (mkStdGen)
+import System.Random.Shuffle (shuffle')
+import Test.Hspec (Spec, describe, example, hspec, it, shouldBe, shouldReturn, shouldSatisfy)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary (..), Gen, elements, forAll, genericShrink, listOf, oneof, (===))
 import Trynocular.Generable (Generable (..))
 import Trynocular.Generator (Generator, fromKey, keys, values)
 import Trynocular.Key (Key, KeyF (..), PartialKey, partialKeys, spy, subsumes, totalKey)
 import Trynocular.PartialKeySet qualified as PartialKeySet
+import Trynocular.Quantiler (Quantiler (..), betaQuantiler, emptyCompleteQuantiler, normalQuantiler)
 
 data Foo
   = Foo1 String Word
@@ -378,8 +382,49 @@ partialKeySetSpec = do
             k `PartialKeySet.member` PartialKeySet.fromList (totalKey <$> ks)
               === (k `elem` ks)
 
+quantilerSpec :: Spec
+quantilerSpec = do
+  describe "NormalQuantiler" $ do
+    it "estimates normal distributions based on z score" $ do
+      -- Responsiveness of 0 ensures the distribution isn't updated.
+      let standardQuantiler = normalQuantiler 0 1 0
+
+      snd (quantile standardQuantiler 0) `shouldBe` 0.5
+      snd (quantile standardQuantiler 1) `shouldBe` 0.8413447460685429
+      snd (quantile standardQuantiler (-1)) `shouldBe` 0.15865525393145707
+
+  describe "BetaQuantiler" $ do
+    it "estimates a uniform distribution" $ do
+      -- Uniform distribution has a variance of 1/12.
+      -- Responsiveness of 0 ensures the distribution isn't updated.
+      let uniformQuantiler = betaQuantiler (0, 1) 0.5 (1 / 12) 0
+      snd (quantile uniformQuantiler 0.00) `shouldBe` 0.00
+      snd (quantile uniformQuantiler 0.25) `shouldBe` 0.25
+      snd (quantile uniformQuantiler 0.50) `shouldBe` 0.50
+      snd (quantile uniformQuantiler 0.75) `shouldBe` 0.75
+      snd (quantile uniformQuantiler 1.00) `shouldBe` 1.00
+
+  describe "CompleteQuantiler" $ do
+    it "approximates a uniform distribution" $
+      example $ do
+        let input = shuffle' [1 :: Int .. 10000] 10000 (mkStdGen 123)
+            quantiler =
+              foldl'
+                (\q x -> fst (quantile q x))
+                (emptyCompleteQuantiler 0.05)
+                input
+
+        -- Accuracy isn't great here, both because the test modifies the
+        -- distribution and because we're not generating a lot of values.
+        abs (snd (quantile quantiler 0) - 0.00) `shouldSatisfy` (< 0.1)
+        abs (snd (quantile quantiler 2500) - 0.25) `shouldSatisfy` (< 0.1)
+        abs (snd (quantile quantiler 5000) - 0.50) `shouldSatisfy` (< 0.1)
+        abs (snd (quantile quantiler 7500) - 0.75) `shouldSatisfy` (< 0.1)
+        abs (snd (quantile quantiler 10000) - 1.00) `shouldSatisfy` (< 0.1)
+
 main :: IO ()
 main = hspec $ do
   describe "Generator" generatorSpec
   describe "spy" spySpec
   describe "PartialKeySet" partialKeySetSpec
+  describe "Quantiler" quantilerSpec

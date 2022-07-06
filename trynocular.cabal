@@ -37,6 +37,8 @@ test-suite trynocular-test
     main-is:          Main.hs
     build-depends:    base
                     , hspec
+                    , random
+                    , random-shuffle
                     , trynocular
                     , QuickCheck
     hs-source-dirs:   test

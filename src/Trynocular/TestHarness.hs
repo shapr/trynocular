@@ -33,7 +33,7 @@ initialTestState generator action =
     generator
     action
     PartialKeySet.empty
-    emptyCompleteQuantiler
+    (emptyCompleteQuantiler 0.1)
 
 updateGenerator ::
   -- | quantile for coverage observation
