@@ -89,7 +89,7 @@ is no point in updating nodes lower than that one.
 ```
 
 Currently, this key is chosen with a 12.5% probability.  We will observe the
-test and determine its *benefit*  (The current idea is to base the benefit on
+test and determine its *benefit*.  (The current idea is to base the benefit on
 code coverage from hpc, but this calculation makes no assumptions about the
 nature of the benefit.)  If the benefit is greater than we have seen when
 testing with other keys, then we want to increase the probability of generating
