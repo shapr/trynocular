@@ -49,11 +49,14 @@ normalQuantiler :: Double -> Double -> Double -> NormalQuantiler
 normalQuantiler = NormalQuantiler
 
 -- | A `Quantiler` implementation that assumes the data follows a beta
--- distribution, and discounts older observations by exponentially
--- down-weighting them based on the given responsiveness.
+-- distribution with a discrete component at each end, and discounts older
+-- observations by exponentially down-weighting them based on the given
+-- responsiveness.
 data BetaQuantiler = BetaQuantiler
   { _bqLow :: Double,
     _bqHigh :: Double,
+    _bqLowProb :: Double,
+    _bqHighProb :: Double,
     _bqScaledMean :: Double,
     _bqScaledVariance :: Double,
     _bqResponsiveness :: Double
@@ -62,28 +65,63 @@ data BetaQuantiler = BetaQuantiler
 instance Quantiler BetaQuantiler where
   type Datum BetaQuantiler = Double
 
-  quantile (BetaQuantiler low high mean variance responsiveness) x =
-    (BetaQuantiler low high mean' variance' responsiveness, result)
-    where
-      scaled = (x - low) / (high - low)
+  quantile (BetaQuantiler low high lowp highp mean variance responsiveness) x
+    | x <= low =
+        let lowp' = (1 - responsiveness) * lowp + responsiveness
+            highp' = ((1 - responsiveness) * highp)
+         in ( BetaQuantiler
+                low
+                high
+                lowp'
+                highp'
+                mean
+                variance
+                responsiveness,
+              lowp' / 2
+            )
+    | x >= high =
+        let lowp' = ((1 - responsiveness) * lowp)
+            highp' = (1 - responsiveness) * highp + responsiveness
+         in ( BetaQuantiler
+                low
+                high
+                lowp'
+                highp'
+                mean
+                variance
+                responsiveness,
+              1 - highp' / 2
+            )
+    | otherwise =
+        let scaled = (x - low) / (high - low)
 
-      mean' = responsiveness * scaled + (1 - responsiveness) * mean
-      xvar = (scaled - mean) ^ (2 :: Int)
-      variance' = responsiveness * xvar + (1 - responsiveness) * variance
+            mean' = responsiveness * scaled + (1 - responsiveness) * mean
+            xvar = (scaled - mean) ^ (2 :: Int)
+            variance' = responsiveness * xvar + (1 - responsiveness) * variance
 
-      alpha = ((1 - mean') / variance' - 1 / mean') * mean' * mean'
-      beta = alpha * (1 / mean' - 1)
+            alpha = ((1 - mean') / variance' - 1 / mean') * mean' * mean'
+            beta = alpha * (1 / mean' - 1)
 
-      result
-        | scaled < 0 = 0
-        | scaled > 1 = 1
-        | otherwise = incompleteBeta alpha beta scaled
+            lowp' = (1 - responsiveness) * lowp
+            highp' = (1 - responsiveness) * highp
+         in ( BetaQuantiler
+                low
+                high
+                lowp'
+                highp'
+                mean'
+                variance'
+                responsiveness,
+              lowp' + (1 - lowp' - highp') * incompleteBeta alpha beta scaled
+            )
 
 betaQuantiler :: (Double, Double) -> Double -> Double -> Double -> BetaQuantiler
 betaQuantiler (low, high) mean variance responsiveness =
   BetaQuantiler
     low
     high
+    0
+    0
     ((mean - low) / (high - low))
     (variance / (high - low) ^ (2 :: Int))
     responsiveness

@@ -404,6 +404,18 @@ quantilerSpec = do
       snd (quantile uniformQuantiler 0.75) `shouldBe` 0.75
       snd (quantile uniformQuantiler 1.00) `shouldBe` 1.00
 
+    it "learns non-zero discrete component at the bottom" $ do
+      let initialQuantiler = betaQuantiler (0, 1) 0.5 (1 / 12) 0.1
+          trainedQuantiler =
+            foldl' ((fst .) . quantile) initialQuantiler (replicate 100 0)
+      abs (snd (quantile trainedQuantiler 0) - 0.5) `shouldSatisfy` (< 0.001)
+
+    it "learns non-zero discrete component at the top" $ do
+      let initialQuantiler = betaQuantiler (0, 1) 0.5 (1 / 12) 0.1
+          trainedQuantiler =
+            foldl' ((fst .) . quantile) initialQuantiler (replicate 100 1)
+      abs (snd (quantile trainedQuantiler 1) - 0.5) `shouldSatisfy` (< 0.001)
+
   describe "CompleteQuantiler" $ do
     it "approximates a uniform distribution" $
       example $ do
