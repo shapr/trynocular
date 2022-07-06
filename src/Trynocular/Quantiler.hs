@@ -91,7 +91,7 @@ betaQuantiler (low, high) mean variance responsiveness =
 -- | A `Quantiler` implementation that makes no assumptions about distribution,
 -- and discounts older observations by exponentially down-weighting them based
 -- on the given responsiveness.  This uses significantly more memory than the
--- statistical estimators above, but is more accurate.
+-- statistical estimators above, but is more versatile.
 data CompleteQuantiler a = CompleteQuantiler
   { _cqDataPoints :: FingerTree (Maybe (Counted a)) (Counted a),
     _cqCurrentWeight :: Double,
