@@ -3,7 +3,7 @@
 
 -- | The 'Generable' type class contains types that have a default 'Generator'
 -- capable of generating any value of that type.
-module Trynocular.Generable (Generable (..), GenericGenerable (..)) where
+module Trynocular.Generable (Generable (..), GenericGenerable (..), genGeneric) where
 
 import Data.Char (chr)
 import Data.Functor.Alt (Alt (..))

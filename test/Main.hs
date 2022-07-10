@@ -5,7 +5,9 @@
 module Main where
 
 import Control.Exception (evaluate)
+import Demo
 import Data.Foldable (foldl')
+import qualified Data.Map as M
 import Data.Functor.Identity (Identity (..))
 import Data.List (nub, sort)
 import Data.Word (Word8)
@@ -35,7 +37,7 @@ import Test.QuickCheck
     (===),
     (==>),
   )
-import Trynocular.Generable (Generable (..))
+import Trynocular.Generable (Generable (..),genGeneric)
 import Trynocular.Generator
   ( Generator,
     adjustProbability,
@@ -61,6 +63,7 @@ import Trynocular.Standardizer
     normalStandardizer,
   )
 import Trynocular.TestHarness (smartCheck)
+import qualified Data.ByteString as B
 
 data Foo
   = Foo1 String Word
@@ -485,11 +488,19 @@ standardizerSpec = do
         abs (snd (percentile standardizer 7500) - 0.75) `shouldSatisfy` (< 0.1)
         abs (snd (percentile standardizer 10000) - 1.00) `shouldSatisfy` (< 0.1)
 
+
 testHarnessSpec :: Spec
 testHarnessSpec = do
   it "runs a test" $ do
-    smartCheck ((,) <$> genAny <*> genAny) $ \(xs :: [Int], ys :: [Int]) -> do
-      length (xs ++ ys) `shouldBe` length xs + length ys
+                    smartCheck genGeneric (\b -> prop_roundtrip b `shouldBe` True)
+
+instance (Ord k, Generable k, Generable v) => Generable (M.Map k v) where
+  genAny = M.fromList <$> genAny
+
+instance Generable B.ByteString where
+  genAny = B.pack <$> genAny
+
+instance Generable Bencode
 
 main :: IO ()
 main = hspec $ do

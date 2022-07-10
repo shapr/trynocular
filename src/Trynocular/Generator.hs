@@ -197,6 +197,9 @@ adjustProbability key target generator = go key generator
     go (Just k) (Apply f g) = Apply f (go (Just k) g)
     go _ _ = error "key doesn't match generator"
 
+    -- determine what probability it has now
     prior = keyProbability generator key
+    -- by what factor would we like to multiply the current probability of this key?
     multiplier = target / prior
+    -- take current probability and divide by current probability
     adjusted p = p * multiplier ** (log p / log prior)

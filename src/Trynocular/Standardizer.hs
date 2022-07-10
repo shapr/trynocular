@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
-
+{-# LANGUAGE ViewPatterns #-}
 module Trynocular.Standardizer
   ( Standardizer (..),
     NormalStandardizer,
@@ -11,16 +11,17 @@ module Trynocular.Standardizer
   )
 where
 
-import Data.FingerTree (FingerTree)
+import Data.FingerTree
 import Data.FingerTree qualified as FingerTree
 import Data.Maybe (fromMaybe)
-import Numeric.SpecFunctions (erfc, incompleteBeta)
+import Numeric.SpecFunctions (erfc, incompleteBeta, invErfc)
 
 -- | A 'Standardizer' is an online method for estimating the percentile of new
 -- observations from a data set.
 class Standardizer std where
   type Datum std
   percentile :: std -> Datum std -> (std, Double)
+  fromPercentile :: std -> Double -> Maybe (Datum std)
 
 -- | A `Standardizer` implementation that assumes the data is normally
 -- distributed, and discounts older observations by exponentially down-weighting
@@ -44,6 +45,11 @@ instance Standardizer NormalStandardizer where
       variance' = responsiveness * xvar + (1 - responsiveness) * variance
 
       zscore = (x - mean') / sqrt variance'
+
+  -- inverse of: 1 - erfc (zscore / sqrt 2) / 2
+  fromPercentile (NormalStandardizer mean variance _) d = Just $ mean + zscore * stddev
+      where zscore = (invErfc $ (1 - d) * 2) * sqrt 2
+            stddev = sqrt variance
 
 normalStandardizer :: Double -> Double -> Double -> NormalStandardizer
 normalStandardizer = NormalStandardizer
@@ -117,6 +123,7 @@ instance Standardizer BetaStandardizer where
                   responsiveness,
                 lowp' + (1 - lowp' - highp') * incompleteBeta alpha beta scaled
               )
+  fromPercentile _ _ = error "not yet implemented, this will not work for now"
 
 betaStandardizer ::
   (Double, Double) -> Double -> Double -> Double -> BetaStandardizer
@@ -203,3 +210,10 @@ instance Ord a => Standardizer (CompleteStandardizer a) where
           _ -> error "CompleteStandardizer percentile: invariant violation"
     where
       totalWeight = maybe 0 countedWeight . FingerTree.measure
+  fromPercentile (CompleteStandardizer points _ _) desiredPercentile = case FingerTree.split enough points of
+                                                                         (_,FingerTree.viewl -> Counted x _ :< _) -> Just x
+                                                                         (FingerTree.viewr -> _ :> Counted x _,_) -> Just x
+                                                                         _ -> Nothing
+      where desiredWeight = desiredPercentile * maybe 0 countedWeight (FingerTree.measure points)
+            enough :: Maybe (Counted a) -> Bool
+            enough x = maybe 0 countedWeight x < desiredWeight

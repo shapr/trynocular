@@ -21,6 +21,7 @@ library
                     , Trynocular.PartialKeySet
                     , Trynocular.Standardizer
                     , Trynocular.TestHarness
+                    , Demo
     build-depends:    base
                     , fingertree
                     , hpc
@@ -28,6 +29,9 @@ library
                     , random
                     , semigroupoids
                     , universe-base
+                    , megaparsec
+                    , bytestring
+                    , containers
     hs-source-dirs:   src
     default-language: GHC2021
     ghc-options:      -Wall
@@ -41,6 +45,8 @@ test-suite trynocular-test
                     , random-shuffle
                     , trynocular
                     , QuickCheck
+                    , bytestring
+                    , containers
     hs-source-dirs:   test
     default-language: GHC2021
     ghc-options:      -Wall

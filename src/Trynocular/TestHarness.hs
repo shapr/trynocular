@@ -12,21 +12,23 @@ import Trynocular.Generator
   )
 import Trynocular.Key (PartialKey, spy)
 import Trynocular.Standardizer
-  ( CompleteStandardizer,
+  ( NormalStandardizer,
     Standardizer (..),
-    emptyCompleteStandardizer,
+    normalStandardizer,
   )
 
 data TestState
   = forall params.
+    Show params =>
     TestState
       Int
       (Generator params)
       (params -> IO ())
-      (CompleteStandardizer Int)
+      NormalStandardizer
 
 initialTestState ::
   forall params.
+  Show params =>
   Generator params ->
   (params -> IO ()) ->
   TestState
@@ -35,7 +37,7 @@ initialTestState generator action =
     0
     generator
     action
-    (emptyCompleteStandardizer 0.1)
+    (normalStandardizer 5 5 0.1)
 
 updateGenerator ::
   -- | quantile for the benefit
@@ -57,15 +59,24 @@ updateGenerator pct pkey gen = adjustProbability pkey targetKeyProb gen
 testHarness :: TestState -> IO ()
 testHarness (TestState n generator action coverage) = do
   key <- pickKey generator
+  print $ fromKey generator key
   (pkey, ((), observedCoverage)) <-
     spy key (observeCoverage . action . fromKey generator)
-  let (coverage', coveragePct) = percentile coverage observedCoverage
+  putStrLn $ "   " <> show observedCoverage
+  let (coverage', coveragePct) = percentile coverage $ fromIntegral observedCoverage
   let generator' = updateGenerator coveragePct pkey generator
   let state' = TestState (n + 1) generator' action coverage'
-  when (shouldContinue state') $ testHarness state'
+  if (shouldContinue state')
+    then testHarness state'
+    else do
+      putStrLn $ "Ran this many test cases: " <> show (n + 1)
 
+-- | at the 95 percentile, we should expect at least 1 additional coverage
 shouldContinue :: TestState -> Bool
-shouldContinue (TestState n _ _ _) = n < 1000
+shouldContinue (TestState _ _ _ standardizer) = maybe False (> threshold) (fromPercentile standardizer 0.99) -- percentile where we expect more coverage
+  where
+    -- number of additional measured regions we expect to see covered after our new test
+    threshold = 1
 
 observeCoverage :: IO a -> IO (a, Int)
 observeCoverage a = do
@@ -85,5 +96,5 @@ tixModuleCount (TixModule _ _ _ regions) = sum $ 1 <$ filter (> 0) regions
 tixCount :: Tix -> Int
 tixCount (Tix ms) = sum $ map tixModuleCount ms
 
-smartCheck :: Generator params -> (params -> IO ()) -> IO ()
+smartCheck :: Show params => Generator params -> (params -> IO ()) -> IO ()
 smartCheck generator action = testHarness (initialTestState generator action)
