@@ -495,9 +495,20 @@ testHarnessSpec = do
 
   describe "tests RBTree" $ do
     it "produces valid trees" $
-      smartCheck
-        genGeneric
-        (\(xs :: [Int]) -> isValid (rbFromList xs) `shouldBe` True)
+      smartCheck genGeneric $ \(xs :: [Int]) ->
+        isValid (rbFromList xs) `shouldBe` True
+
+    it "finds nothing in empty set" $
+      smartCheck genAny $ \(x :: Int) ->
+        rbMember rbEmpty x `shouldBe` False
+
+    it "finds first inserted member in tree" $
+      smartCheck genGeneric $ \(x :: Int, xs :: [Int]) ->
+        rbMember (rbFromList (x : xs)) x `shouldBe` True
+
+    it "finds last inserted member in tree" $
+      smartCheck genGeneric $ \(x :: Int, xs :: [Int]) ->
+        rbMember (rbFromList (xs ++ [x])) x `shouldBe` True
 
 instance (Ord k, Generable k, Generable v) => Generable (M.Map k v) where
   genAny = M.fromList <$> genAny
