@@ -5,12 +5,13 @@
 module Main where
 
 import Control.Exception (evaluate)
-import Demo
+import Data.ByteString qualified as B
 import Data.Foldable (foldl')
-import qualified Data.Map as M
 import Data.Functor.Identity (Identity (..))
 import Data.List (nub, sort)
+import Data.Map qualified as M
 import Data.Word (Word8)
+import Demo
 import GHC.Generics (Generic)
 import System.Random (mkStdGen)
 import System.Random.Shuffle (shuffle')
@@ -37,7 +38,7 @@ import Test.QuickCheck
     (===),
     (==>),
   )
-import Trynocular.Generable (Generable (..),genGeneric)
+import Trynocular.Generable (Generable (..), genGeneric)
 import Trynocular.Generator
   ( Generator,
     adjustProbability,
@@ -63,7 +64,6 @@ import Trynocular.Standardizer
     normalStandardizer,
   )
 import Trynocular.TestHarness (smartCheck)
-import qualified Data.ByteString as B
 
 data Foo
   = Foo1 String Word
@@ -488,11 +488,16 @@ standardizerSpec = do
         abs (snd (percentile standardizer 7500) - 0.75) `shouldSatisfy` (< 0.1)
         abs (snd (percentile standardizer 10000) - 1.00) `shouldSatisfy` (< 0.1)
 
-
 testHarnessSpec :: Spec
 testHarnessSpec = do
-  it "runs a test" $ do
-                    smartCheck genGeneric (\b -> prop_roundtrip b `shouldBe` True)
+  it "tests bencode" $
+    smartCheck genGeneric (\b -> prop_roundtrip b `shouldBe` True)
+
+  describe "tests RBTree" $ do
+    it "produces valid trees" $
+      smartCheck
+        genGeneric
+        (\(xs :: [Int]) -> isValid (rbFromList xs) `shouldBe` True)
 
 instance (Ord k, Generable k, Generable v) => Generable (M.Map k v) where
   genAny = M.fromList <$> genAny

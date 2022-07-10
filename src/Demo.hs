@@ -3,12 +3,14 @@
 module Demo where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
+import Data.ByteString qualified as B
 import Data.ByteString.Builder (Builder)
-import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Lazy as BL
+import Data.ByteString.Builder qualified as BB
+import Data.ByteString.Lazy qualified as BL
 import Data.Char (chr, ord)
-import qualified Data.Map.Strict as M
+import Data.Foldable (foldl')
+import Data.Map.Strict qualified as M
+import Data.Maybe (isJust)
 import Data.Void (Void)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
@@ -21,7 +23,7 @@ import Text.Megaparsec
     satisfy,
     (<|>),
   )
-import qualified Text.Megaparsec.Byte as MB
+import Text.Megaparsec.Byte qualified as MB
 
 type Parser = Parsec Void ByteString
 
@@ -102,3 +104,68 @@ write (BString bs) = (BB.intDec . B.length $ bs) <> BB.char8 ':' <> BB.byteStrin
 write (BInteger i) = delimit 'i' $ BB.integerDec i
 write (BList bs) = delimit 'l' $ foldMap write bs
 write (BDict m) = delimit 'd' $ M.foldMapWithKey (\k v -> write (BString k) <> write v) m
+
+data RBTree a
+  = Branch RB (RBTree a) a (RBTree a)
+  | Nil
+  deriving (Show, Eq, Ord, Generic)
+
+data RB = Red | Black deriving (Show, Eq, Ord, Generic)
+
+rbEmpty :: RBTree a
+rbEmpty = Nil
+
+rbInsert :: Ord a => a -> RBTree a -> RBTree a
+rbInsert new t = blacken (go t)
+  where
+    go Nil = Branch Red Nil new Nil
+    go (Branch c l y r) = case compare new y of
+      LT -> balance c (go l) y r
+      GT -> balance c l y (go r)
+      EQ -> Branch c l y r
+
+    blacken (Branch _ l y r) = Branch Black l y r
+    blacken Nil = Nil
+
+    balance Black (Branch Red (Branch Red a x b) y c) z d =
+      Branch Red (Branch Black a x b) y (Branch Black c z d)
+    balance Black (Branch Red a x (Branch Red b y c)) z d =
+      Branch Red (Branch Black a x b) y (Branch Black c z d)
+    balance Black a x (Branch Red (Branch Red b y c) z d) =
+      Branch Red (Branch Black a x b) y (Branch Black c z d)
+    balance Black a x (Branch Red b y (Branch Red c z d)) =
+      Branch Red (Branch Black a x b) y (Branch Black c z d)
+    balance c a x b = Branch c a x b
+
+rbFromList :: Ord a => [a] -> RBTree a
+rbFromList = foldl' (flip rbInsert) rbEmpty
+
+rbMember :: Ord a => RBTree a -> a -> Bool
+rbMember Nil _ = False
+rbMember (Branch _ l y r) x = case compare x y of
+  LT -> rbMember l x
+  GT -> rbMember r x
+  EQ -> True
+
+isValid :: RBTree a -> Bool
+isValid tree = rootIsBlack tree && noRedOnRed tree && isJust (blackLen tree)
+  where
+    rootIsBlack Nil = True
+    rootIsBlack (Branch Black _ _ _) = True
+    rootIsBlack _ = False
+
+    noRedOnRed Nil = True
+    noRedOnRed (Branch c l _ r) =
+      (c == Black || (rootIsBlack l && rootIsBlack r))
+        && noRedOnRed l
+        && noRedOnRed r
+
+    blackLen :: RBTree a -> Maybe Int
+    blackLen Nil = Just 1
+    blackLen (Branch c l _ r) =
+      (if c == Black then succ else id)
+        <$> (consistent (blackLen l) (blackLen r))
+
+    consistent a b
+      | a == b = a
+      | otherwise = Nothing

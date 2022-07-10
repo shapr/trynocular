@@ -1,6 +1,5 @@
 module Trynocular.TestHarness where
 
-import Control.Monad (when)
 import Trace.Hpc.Reflect (examineTix)
 import Trace.Hpc.Tix (Tix (..), TixModule (..))
 import Trynocular.Generator
@@ -63,7 +62,8 @@ testHarness (TestState n generator action coverage) = do
   (pkey, ((), observedCoverage)) <-
     spy key (observeCoverage . action . fromKey generator)
   putStrLn $ "   " <> show observedCoverage
-  let (coverage', coveragePct) = percentile coverage $ fromIntegral observedCoverage
+  let (coverage', coveragePct) =
+        percentile coverage $ fromIntegral observedCoverage
   let generator' = updateGenerator coveragePct pkey generator
   let state' = TestState (n + 1) generator' action coverage'
   if (shouldContinue state')
@@ -73,10 +73,11 @@ testHarness (TestState n generator action coverage) = do
 
 -- | at the 95 percentile, we should expect at least 1 additional coverage
 shouldContinue :: TestState -> Bool
-shouldContinue (TestState _ _ _ standardizer) = maybe False (> threshold) (fromPercentile standardizer 0.99) -- percentile where we expect more coverage
+shouldContinue (TestState _ _ _ standardizer) =
+  maybe False (> threshold) (fromPercentile standardizer targetPercentile)
   where
-    -- number of additional measured regions we expect to see covered after our new test
-    threshold = 1
+    targetPercentile = 0.99 -- percentile where we expect more coverage
+    threshold = 1 -- number of additional measured regions we expect to see
 
 observeCoverage :: IO a -> IO (a, Int)
 observeCoverage a = do
