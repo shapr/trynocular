@@ -1,4 +1,4 @@
-{ compiler ? "ghc922" }:
+{ compiler ? "ghc928" }:
 
 let
   sources = import ./nix/sources.nix;
@@ -8,12 +8,12 @@ let
 
   myHaskellPackages = pkgs.haskell.packages.${compiler}.override {
     overrides = hself: hsuper: {
-      "takedouble" = hself.callCabal2nix "takedouble" (gitignore ./.) { };
+      "trynocular" = hself.callCabal2nix "trynocular" (gitignore ./.) { };
     };
   };
 
   shell = myHaskellPackages.shellFor {
-    packages = p: [ p."takedouble" ];
+    packages = p: [ p."trynocular" ];
     buildInputs = [
       myHaskellPackages.haskell-language-server
       pkgs.haskellPackages.cabal-install
@@ -27,16 +27,16 @@ let
     withHoogle = true;
   };
 
-  exe = pkgs.haskell.lib.justStaticExecutables (myHaskellPackages."takedouble");
+  exe = pkgs.haskell.lib.justStaticExecutables (myHaskellPackages."trynocular");
 
   docker = pkgs.dockerTools.buildImage {
-    name = "takedouble";
-    config.Cmd = [ "${exe}/bin/takedouble" ];
+    name = "trynocular";
+    config.Cmd = [ "${exe}/bin/trynocular" ];
   };
 in {
   inherit shell;
   inherit exe;
   inherit docker;
   inherit myHaskellPackages;
-  "takedouble" = myHaskellPackages."takedouble";
+  "trynocular" = myHaskellPackages."trynocular";
 }
